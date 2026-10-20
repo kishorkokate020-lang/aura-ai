@@ -1,0 +1,666 @@
+
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#0b0c10">
+<title>AURA AI — Intelligent Workspace</title>
+
+<style>
+:root{
+  --bg:#0b0c10;--panel:#12141a;--panel2:#191c24;
+  --line:#2b2f3b;--text:#f3f4f7;--muted:#9da4b4;
+  --gold:#e7c47a;--gold2:#b9914a;--green:#8bd7ac;
+  --red:#ff9999;--blue:#9bbdff;
+}
+*{box-sizing:border-box}
+body{
+  margin:0;background:var(--bg);color:var(--text);
+  font-family:Inter,"Segoe UI",Arial,sans-serif;min-height:100vh
+}
+button,textarea,input{font:inherit}
+button{cursor:pointer}
+button:focus-visible,textarea:focus-visible,input:focus-visible{
+  outline:2px solid var(--gold);outline-offset:3px
+}
+.app{display:grid;grid-template-columns:245px minmax(0,1fr);min-height:100vh}
+.sidebar{
+  background:#0e1015;border-right:1px solid var(--line);
+  padding:20px 13px;display:flex;flex-direction:column;gap:16px
+}
+.brand{display:flex;align-items:center;gap:10px;padding:4px 7px 12px}
+.brand-icon,.orb{
+  display:grid;place-items:center;color:#171208;
+  background:linear-gradient(140deg,#f7dfa1,#b98c43)
+}
+.brand-icon{width:42px;height:42px;border-radius:13px;font-size:23px}
+.brand-name{font-size:20px;font-weight:850;letter-spacing:2px}
+.brand-sub{font-size:9px;letter-spacing:1.6px;color:var(--muted);margin-top:4px}
+button{transition:border-color .15s,background .15s}
+.new-chat,.side-btn,.chat-item,.suggestion,.tool-btn,.action-btn{
+  border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  color:var(--text);padding:11px;text-align:left
+}
+.new-chat{border-color:#51452e;background:#201b13;color:var(--gold)}
+.section-label{font-size:10px;letter-spacing:1.5px;color:#777e8d;padding:0 7px}
+.chat-list{display:flex;flex-direction:column;gap:5px;max-height:35vh;overflow:auto}
+.chat-item{background:transparent;border-color:transparent;overflow:hidden;
+  white-space:nowrap;text-overflow:ellipsis;font-size:12px}
+.chat-item.active,.chat-item:hover{background:var(--panel2);border-color:var(--line)}
+.side-tools{display:grid;gap:7px}
+.side-btn{font-size:12px;color:#d6d8df}
+.side-btn:hover,.tool-btn:hover,.action-btn:hover,.suggestion:hover{border-color:var(--gold2)}
+.sidebar-bottom{margin-top:auto;border-top:1px solid var(--line);
+  padding:12px 7px;color:#818795;font-size:11px;line-height:1.7}
+.main{min-width:0;min-height:100vh;display:flex;flex-direction:column}
+.topbar{
+  min-height:65px;padding:14px 23px;border-bottom:1px solid var(--line);
+  display:flex;align-items:center;justify-content:space-between;gap:12px
+}
+.top-title{font-weight:700}
+.status{font-size:11px;color:var(--green)}
+.workspace{width:100%;max-width:950px;margin:auto;padding:28px 22px 16px;flex:1}
+.welcome{text-align:center;padding:28px 0}
+.orb{width:65px;height:65px;border-radius:22px;margin:0 auto 18px;
+  font-size:30px;box-shadow:0 0 45px #d5a95617}
+h1{margin:0 0 12px;font-size:clamp(27px,4vw,41px);letter-spacing:-1px}
+.gold{color:var(--gold)}
+.welcome p{max-width:570px;margin:auto;color:var(--muted);line-height:1.7}
+.suggestions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:10px;margin-top:24px;text-align:left}
+.suggestion{padding:14px;line-height:1.5}
+.suggestion small{display:block;color:var(--muted);margin-top:4px;font-size:11px}
+.messages{display:flex;flex-direction:column;gap:22px;padding-bottom:24px}
+.message{display:flex;gap:11px;align-items:flex-start}
+.avatar{flex:0 0 34px;width:34px;height:34px;border-radius:11px;
+  display:grid;place-items:center;font-size:11px;font-weight:800;
+  background:#232630;border:1px solid var(--line)}
+.message.assistant .avatar{background:linear-gradient(140deg,#f7dfa1,#b98c43);color:#171208;border:0}
+.message-body{min-width:0;flex:1}
+.message-head{font-size:11px;color:var(--muted);margin:3px 0 8px}
+.message-text{line-height:1.75;overflow-wrap:anywhere}
+.message-text pre{white-space:pre-wrap;overflow:auto;background:#08090c;
+  padding:12px;border:1px solid var(--line);border-radius:9px}
+.message-text code{color:#f0d394}
+.message-text ul{padding-left:22px}
+.message-text p{margin:0 0 9px}
+.copy-btn{margin-top:9px;border:1px solid var(--line);border-radius:8px;
+  color:#c4c8d2;background:transparent;padding:6px 9px;font-size:11px}
+.composer-wrap{padding:10px 22px 15px}
+.composer{max-width:900px;margin:auto}
+.input-box{border:1px solid #373b47;background:var(--panel);border-radius:16px;
+  padding:11px;box-shadow:0 12px 45px #00000024}
+textarea{display:block;width:100%;resize:vertical;min-height:60px;max-height:200px;
+  background:transparent;color:var(--text);border:0;outline:none;
+  padding:7px 8px;line-height:1.6}
+textarea::placeholder{color:#757b89}
+.composer-actions{display:flex;align-items:center;justify-content:space-between;
+  gap:8px;padding:7px 3px 0;flex-wrap:wrap}
+.hint{font-size:10px;color:#777e8b}
+.action-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.action-btn{padding:9px 11px;font-size:12px}
+.action-btn.active{border-color:var(--green);color:var(--green)}
+.send-btn{border:0;border-radius:10px;
+  background:linear-gradient(135deg,#f1d99c,#b58a43);
+  color:#171208;padding:10px 17px;font-weight:800}
+.send-btn:disabled{opacity:.55;cursor:wait}
+.file-label{display:inline-flex;align-items:center;gap:5px}
+#fileInput{display:none}
+.file-status{display:none;margin-top:9px;color:var(--muted);font-size:11px;overflow-wrap:anywhere}
+.footer-note{text-align:center;color:#717785;font-size:10px;line-height:1.6;padding:0 12px 13px}
+.error{color:var(--red)}
+.task-list{list-style:none;padding:0!important}
+.task-list li{display:flex;gap:8px;align-items:flex-start;margin:9px 0}
+.task-list input{margin-top:6px;accent-color:var(--gold)}
+.task-list label{cursor:pointer}
+.task-list input:checked+span{text-decoration:line-through;color:var(--muted)}
+@media(max-width:720px){
+  .app{grid-template-columns:1fr}
+  .sidebar{border-right:0;border-bottom:1px solid var(--line);padding:10px;gap:10px}
+  .sidebar-bottom,.section-label{display:none}
+  .brand{padding:2px 4px}
+  .chat-list{flex-direction:row;max-height:none;overflow-x:auto}
+  .chat-item{flex:0 0 auto;max-width:165px}
+  .side-tools{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .topbar{padding:13px 15px}
+  .workspace{padding:20px 14px 10px}
+  .composer-wrap{padding:9px 12px 13px}
+  .suggestions{grid-template-columns:1fr}
+}
+</style>
+</head>
+
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-icon">✦</div>
+      <div>
+        <div class="brand-name">AURA AI</div>
+        <div class="brand-sub">INTELLIGENT WORKSPACE</div>
+      </div>
+    </div>
+
+    <button class="new-chat" id="newChatBtn">＋ नई बातचीत</button>
+    <div class="section-label">आपकी बातचीत</div>
+    <div class="chat-list" id="chatList"></div>
+
+    <div class="section-label">WORKSPACE TOOLS</div>
+    <div class="side-tools">
+      <button class="side-btn" data-tool="planner">◈ Smart Planner</button>
+      <button class="side-btn" data-tool="ideas">✧ Idea Analyzer</button>
+      <button class="side-btn" data-tool="focus">◎ Daily Focus</button>
+      <button class="side-btn" data-tool="documents">▤ Document Assistant</button>
+    </div>
+
+    <div class="sidebar-bottom">
+      <strong class="gold">AURA AI</strong><br>
+      आपका AI workspace<br>
+      <span id="savedStatus">बातचीत ब्राउज़र में सेव होती है।</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="top-title">AI Workspace <span class="gold">✦</span></div>
+      <div class="status" id="connectionStatus">● तैयार</div>
+    </header>
+
+    <section class="workspace">
+      <div class="welcome" id="welcome">
+        <div class="orb">✦</div>
+        <h1>आपका विचार। <span class="gold">AURA AI.</span></h1>
+        <p>सवाल पूछिए, विचारों का विश्लेषण कीजिए, योजनाएँ बनाइए और दस्तावेज़ समझिए।</p>
+        <div class="suggestions">
+          <button class="suggestion" data-tool="ideas">
+            💡 बिजनेस आइडिया
+            <small>नए विचार और व्यवहारिक विश्लेषण</small>
+          </button>
+          <button class="suggestion" data-tool="planner">
+            ◈ काम की योजना
+            <small>कामों को छोटे चरणों में बाँटें</small>
+          </button>
+          <button class="suggestion" data-tool="documents">
+            ▤ दस्तावेज़ समझें
+            <small>फ़ाइल से सारांश और मुख्य बातें</small>
+          </button>
+          <button class="suggestion" data-tool="focus">
+            ◎ आज का फोकस
+            <small>आज के ज़रूरी काम तय करें</small>
+          </button>
+        </div>
+      </div>
+      <div class="messages" id="messages" aria-live="polite"></div>
+    </section>
+
+    <div class="composer-wrap">
+      <div class="composer">
+        <div class="input-box">
+          <textarea id="userInput" rows="2"
+            placeholder="AURA AI से कुछ भी पूछें…"></textarea>
+
+          <div class="file-status" id="fileStatus"></div>
+          <div class="composer-actions">
+            <span class="hint">Enter = भेजें · Shift + Enter = नई लाइन</span>
+            <div class="action-row">
+              <label class="action-btn file-label" for="fileInput">＋ फ़ाइल</label>
+              <input id="fileInput" type="file"
+                accept=".txt,.md,.csv,.json,.log,.pdf">
+              <button class="action-btn" id="micBtn" type="button"
+                title="बोलकर लिखें" aria-label="बोलकर लिखें">🎙 बोलें</button>
+              <button class="action-btn" id="speakBtn" type="button"
+                title="जवाब सुनें" aria-label="जवाब सुनें">🔊 सुनें</button>
+              <button class="send-btn" id="sendBtn" type="button">भेजें ↑</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-note">
+      AURA AI के जवाब AI द्वारा तैयार होते हैं। महत्वपूर्ण जानकारी की पुष्टि करें।
+    </div>
+  </main>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+"use strict";
+
+/* मौजूदा Apps Script endpoint */
+const API_URL =
+"https://script.google.com/macros/s/AKfycbxjT4lFK701nBdc41hVf-ol3tgcJU8AlpvXttJhRhexZ1IQ1E-PZvb3PZS-APMbFWYC/exec";
+
+const STORAGE_KEY = "aura_ai_conversations_v2";
+const MAX_HISTORY = 12;
+const MAX_FILE_CHARS = 12000;
+
+const $ = id => document.getElementById(id);
+let conversations = loadConversations();
+let currentChatId = null;
+let isSending = false;
+let selectedFileText = "";
+let selectedFileName = "";
+let recognition = null;
+let isListening = false;
+let lastAssistantText = "";
+
+function makeId(){
+  return Date.now().toString(36)+Math.random().toString(36).slice(2,8);
+}
+
+function loadConversations(){
+  try{
+    const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]");
+    return Array.isArray(saved)?saved:[];
+  }catch(e){return []}
+}
+
+function saveConversations(){
+  try{
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(conversations));
+    $("savedStatus").textContent="बातचीत इस ब्राउज़र में सेव है।";
+  }catch(e){
+    $("savedStatus").textContent="बातचीत सेव नहीं हो सकी। ब्राउज़र स्टोरेज जाँचें।";
+  }
+}
+
+function activeChat(){
+  return conversations.find(c=>c.id===currentChatId);
+}
+
+function createChat(){
+  const chat={id:makeId(),title:"नई बातचीत",messages:[],updatedAt:Date.now()};
+  conversations.unshift(chat);
+  currentChatId=chat.id;
+  saveConversations();
+  renderChatList();
+  renderMessages();
+  $("userInput").focus();
+}
+
+function selectChat(id){
+  currentChatId=id;
+  renderChatList();
+  renderMessages();
+}
+
+function renderChatList(){
+  const list=$("chatList");
+  list.innerHTML="";
+  conversations.forEach(chat=>{
+    const button=document.createElement("button");
+    button.className="chat-item"+(chat.id===currentChatId?" active":"");
+    button.textContent="◌ "+(chat.title||"नई बातचीत");
+    button.title=chat.title||"नई बातचीत";
+    button.addEventListener("click",()=>selectChat(chat.id));
+    list.appendChild(button);
+  });
+}
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g,ch=>({
+    "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"
+  })[ch]);
+}
+
+function formatText(value){
+  let safe=escapeHtml(value);
+  safe=safe.replace(/```([\s\S]*?)```/g,
+    (_,code)=>"<pre><code>"+code+"</code></pre>");
+  safe=safe.replace(/`([^`\n]+)`/g,"<code>$1</code>");
+  safe=safe.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
+  safe=safe.replace(/\*([^*\n]+)\*/g,"<em>$1</em>");
+  safe=safe.replace(/^### (.+)$/gm,"<strong>$1</strong>");
+  safe=safe.replace(/^## (.+)$/gm,"<strong>$1</strong>");
+  safe=safe.replace(/^# (.+)$/gm,"<strong>$1</strong>");
+  safe=safe.replace(/^\s*[-•] (.+)$/gm,"• $1");
+  safe=safe.replace(/\n/g,"<br>");
+  return safe;
+}
+
+function renderMessages(){
+  const chat=activeChat();
+  const messagesEl=$("messages");
+  $("welcome").style.display=(chat&&chat.messages.length)?"none":"block";
+  messagesEl.innerHTML="";
+  if(!chat)return;
+
+  chat.messages.forEach(message=>{
+    const row=document.createElement("div");
+    row.className="message "+(message.role==="assistant"?"assistant":"user");
+
+    const avatar=document.createElement("div");
+    avatar.className="avatar";
+    avatar.textContent=message.role==="assistant"?"✦":"YOU";
+
+    const body=document.createElement("div");
+    body.className="message-body";
+
+    const head=document.createElement("div");
+    head.className="message-head";
+    head.textContent=message.role==="assistant"?"AURA AI":"आप";
+
+    const text=document.createElement("div");
+    text.className="message-text";
+    text.innerHTML=formatText(message.content||"");
+
+    body.appendChild(head);
+    body.appendChild(text);
+
+    if(message.role==="assistant"&&message.content){
+      const copy=document.createElement("button");
+      copy.className="copy-btn";
+      copy.textContent="▢ कॉपी";
+      copy.addEventListener("click",async()=>{
+        try{
+          await navigator.clipboard.writeText(message.content);
+          copy.textContent="✓ कॉपी हो गया";
+        }catch(e){
+          copy.textContent="कॉपी नहीं हुआ";
+        }
+      });
+      body.appendChild(copy);
+      lastAssistantText=message.content;
+    }
+    row.append(avatar,body);
+    messagesEl.appendChild(row);
+  });
+}
+
+function addMessage(role,content){
+  const chat=activeChat();
+  if(!chat)return;
+  chat.messages.push({role,content,timestamp:Date.now()});
+  if(role==="user"&&chat.title==="नई बातचीत"){
+    chat.title=content.slice(0,36)+(content.length>36?"…":"");
+  }
+  chat.updatedAt=Date.now();
+  saveConversations();
+  renderChatList();
+  renderMessages();
+}
+
+function getHistoryForApi(chat){
+  return chat.messages
+    .filter(m=>(m.role==="user"||m.role==="assistant")&&
+      typeof m.content==="string"&&m.content.trim())
+    .slice(-MAX_HISTORY)
+    .map(m=>({role:m.role,content:m.content}));
+}
+
+function setStatus(text,color){
+  $("connectionStatus").textContent="● "+text;
+  $("connectionStatus").style.color=color||"var(--green)";
+}
+
+function showTemporaryMessage(text){
+  $("fileStatus").style.display="block";
+  $("fileStatus").textContent=text;
+}
+
+function removeLoading(id){
+  const el=document.getElementById(id);
+  if(el)el.remove();
+}
+
+async function sendMessage(prefilledText){
+  if(isSending)return;
+  const input=$("userInput");
+  let message=String(typeof prefilledText==="string"?prefilledText:input.value).trim();
+
+  if(selectedFileText){
+    message += "\n\nफ़ाइल का नाम: "+selectedFileName+
+      "\nफ़ाइल की सामग्री (सीमित अंश):\n"+selectedFileText+
+      "\n\nकृपया इस फ़ाइल के आधार पर उत्तर दें।";
+  }
+  if(!message){input.focus();return}
+  if(!currentChatId||!activeChat())createChat();
+
+  const chat=activeChat();
+  const history=getHistoryForApi(chat);
+  isSending=true;
+  $("sendBtn").disabled=true;
+  $("sendBtn").textContent="सोच रहा है…";
+  setStatus("जवाब तैयार हो रहा है","var(--gold)");
+  input.value="";
+  addMessage("user",message);
+
+  const loadingId="loading-"+makeId();
+  const loading=document.createElement("div");
+  loading.id=loadingId;
+  loading.className="message assistant";
+  loading.innerHTML='<div class="avatar">✦</div><div class="message-body">'+
+    '<div class="message-head">AURA AI</div>'+
+    '<div class="message-text">जवाब तैयार हो रहा है…</div></div>';
+  $("messages").appendChild(loading);
+
+  try{
+    const response=await fetch(API_URL,{
+      method:"POST",
+      headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({message,history})
+    });
+    if(!response.ok)throw new Error("HTTP "+response.status);
+    const data=await response.json();
+    removeLoading(loadingId);
+
+    if(data&&data.reply){
+      addMessage("assistant",String(data.reply));
+      lastAssistantText=String(data.reply);
+      setStatus("जवाब मिल गया","var(--green)");
+    }else{
+      addMessage("assistant","⚠️ "+(data&&data.error?data.error:
+        "जवाब नहीं मिला। कृपया फिर कोशिश करें।"));
+      setStatus("जाँच आवश्यक","var(--red)");
+    }
+  }catch(error){
+    removeLoading(loadingId);
+    addMessage("assistant",
+      "⚠️ कनेक्शन में समस्या हुई। इंटरनेट और Apps Script deployment जाँचें।");
+    setStatus("कनेक्शन समस्या","var(--red)");
+    console.error("AURA AI request failed:",error);
+  }finally{
+    isSending=false;
+    $("sendBtn").disabled=false;
+    $("sendBtn").textContent="भेजें ↑";
+    selectedFileText="";
+    selectedFileName="";
+    $("fileInput").value="";
+    $("fileStatus").style.display="none";
+    input.focus();
+  }
+}
+
+/* फीचर बटन: मौजूदा चैट backend के जरिए काम करेंगे */
+const toolPrompts={
+  planner:"PLAN: मेरे लक्ष्य के लिए एक व्यवहारिक योजना बनाओ। कामों को छोटे चरणों में बाँटो। प्रत्येक चरण के लिए समय, प्राथमिकता और पूरा होने की जाँच शामिल करो।",
+  ideas:"IDEA ANALYSIS: मेरे विचार का विश्लेषण करो। लाभ, कठिनाइयाँ, संभावित सीमाएँ और सुधार के अगले तीन कदम बताओ। अगर विचार नहीं दिया है, तो पहले मुझसे विचार पूछो।",
+  focus:"DAILY FOCUS: आज के लिए तीन प्राथमिक काम सुझाओ। हर काम के साथ कारण, अनुमानित समय और पूरा होने की जाँच बताओ।",
+  documents:"DOCUMENT ASSISTANT: मैं दस्तावेज़ की सामग्री दूँगा। उसका सारांश, मुख्य बिंदु और ज़रूरी कार्रवाई सरल हिंदी में बताओ।"
+};
+
+function runTool(name){
+  if(name==="documents"&&!selectedFileText){
+    $("userInput").value="मेरे दस्तावेज़ का सारांश, मुख्य बिंदु और आवश्यक कार्रवाई बताओ। पहले मुझे फ़ाइल जोड़ने का निर्देश दो।";
+    $("userInput").focus();
+    showTemporaryMessage("＋ फ़ाइल दबाकर समर्थित दस्तावेज़ चुनें।");
+    return;
+  }
+  sendMessage(toolPrompts[name]||"मेरी मदद करो।");
+}
+
+document.querySelectorAll("[data-tool]").forEach(button=>{
+  button.addEventListener("click",()=>runTool(button.dataset.tool));
+});
+$("sendBtn").addEventListener("click",()=>sendMessage());
+$("newChatBtn").addEventListener("click",createChat);
+$("userInput").addEventListener("keydown",event=>{
+  if(event.key==="Enter"&&!event.shiftKey){
+    event.preventDefault();
+    sendMessage();
+  }
+});
+
+/* Voice input: Chrome Web Speech API */
+function initRecognition(){
+  const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+  if(!SpeechRecognition){
+    $("micBtn").title="इस ब्राउज़र में Speech Recognition उपलब्ध नहीं है";
+    return null;
+  }
+  const r=new SpeechRecognition();
+  r.lang="hi-IN";
+  r.continuous=false;
+  r.interimResults=true;
+
+  r.onstart=()=>{
+    isListening=true;
+    $("micBtn").classList.add("active");
+    $("micBtn").textContent="⏹ सुन रहा है";
+    showTemporaryMessage("बोलिए… आपकी आवाज़ को टेक्स्ट में बदला जा रहा है।");
+    setStatus("माइक्रोफ़ोन सुन रहा है","var(--green)");
+  };
+  r.onresult=event=>{
+    let finalText="";
+    let interim="";
+    for(let i=event.resultIndex;i<event.results.length;i++){
+      const part=event.results[i][0].transcript;
+      if(event.results[i].isFinal)finalText+=part;
+      else interim+=part;
+    }
+    if(finalText)$("userInput").value=
+      ($("userInput").value+" "+finalText).trim();
+    if(interim)showTemporaryMessage("पहचाने जा रहे शब्द: "+interim);
+  };
+  r.onerror=event=>{
+    const errors={
+      "not-allowed":"माइक्रोफ़ोन की अनुमति नहीं मिली। साइट की अनुमति जाँचें।",
+      "service-not-allowed":"ब्राउज़र की Speech सेवा अनुमति नहीं दे रही।",
+      "no-speech":"आवाज़ नहीं मिली। फिर कोशिश करें।",
+      "audio-capture":"माइक्रोफ़ोन उपलब्ध नहीं है। Windows की सेटिंग जाँचें。",
+      "network":"Speech Recognition के लिए नेटवर्क समस्या हुई।"
+    };
+    showTemporaryMessage(errors[event.error]||"Voice error: "+event.error);
+    setStatus("Voice समस्या","var(--red)");
+  };
+  r.onend=()=>{
+    isListening=false;
+    $("micBtn").classList.remove("active");
+    $("micBtn").textContent="🎙 बोलें";
+  };
+  return r;
+}
+
+$("micBtn").addEventListener("click",()=>{
+  if(isListening&&recognition){
+    recognition.stop();
+    return;
+  }
+  recognition=initRecognition();
+  if(!recognition){
+    showTemporaryMessage("आपके ब्राउज़र में Speech Recognition उपलब्ध नहीं है। Chrome में खोलकर कोशिश करें।");
+    setStatus("Voice समर्थित नहीं","var(--red)");
+    return;
+  }
+  try{
+    recognition.start();
+  }catch(error){
+    showTemporaryMessage("Voice शुरू नहीं हो सकी। कुछ सेकंड बाद फिर कोशिश करें।");
+    console.error(error);
+  }
+});
+
+/* Voice output */
+$("speakBtn").addEventListener("click",()=>{
+  if(!("speechSynthesis" in window)){
+    showTemporaryMessage("इस ब्राउज़र में आवाज़ में जवाब सुनाने की सुविधा उपलब्ध नहीं है।");
+    return;
+  }
+  if(window.speechSynthesis.speaking){
+    window.speechSynthesis.cancel();
+    $("speakBtn").textContent="🔊 सुनें";
+    return;
+  }
+  if(!lastAssistantText){
+    showTemporaryMessage("पहले AURA AI से कोई सवाल पूछें।");
+    return;
+  }
+  const utterance=new SpeechSynthesisUtterance(lastAssistantText);
+  utterance.lang="hi-IN";
+  utterance.rate=0.95;
+  utterance.onstart=()=>{$("speakBtn").textContent="⏹ रोकें"};
+  utterance.onend=()=>{$("speakBtn").textContent="🔊 सुनें"};
+  utterance.onerror=()=>{$("speakBtn").textContent="🔊 सुनें"};
+  window.speechSynthesis.speak(utterance);
+});
+
+/* Supported document text extraction */
+async function extractPdfText(file){
+  if(!window.pdfjsLib)throw new Error("PDF टेक्स्ट लाइब्रेरी लोड नहीं हुई।");
+  pdfjsLib.GlobalWorkerOptions.workerSrc=
+    "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  const buffer=await file.arrayBuffer();
+  const pdf=await pdfjsLib.getDocument({data:buffer}).promise;
+  let output="";
+  for(let pageNum=1;pageNum<=pdf.numPages;pageNum++){
+    const page=await pdf.getPage(pageNum);
+    const content=await page.getTextContent();
+    output+=content.items.map(item=>item.str).join(" ")+"\n";
+    if(output.length>=MAX_FILE_CHARS)break;
+  }
+  return output;
+}
+
+$("fileInput").addEventListener("change",async event=>{
+  const file=event.target.files&&event.target.files[0];
+  if(!file)return;
+  const extension=file.name.split(".").pop().toLowerCase();
+  const allowed=["txt","md","csv","json","log","pdf"];
+  if(!allowed.includes(extension)){
+    showTemporaryMessage("यह फ़ाइल प्रकार अभी समर्थित नहीं है। TXT, MD, CSV, JSON, LOG या PDF चुनें।");
+    event.target.value="";
+    return;
+  }
+  if(file.size>10*1024*1024){
+    showTemporaryMessage("फ़ाइल 10 MB से बड़ी है। छोटी फ़ाइल चुनें।");
+    event.target.value="";
+    return;
+  }
+  showTemporaryMessage("फ़ाइल पढ़ी जा रही है: "+file.name);
+  try{
+    let text;
+    if(extension==="pdf")text=await extractPdfText(file);
+    else text=await file.text();
+
+    if(!text.trim()){
+      showTemporaryMessage("इस फ़ाइल से टेक्स्ट नहीं मिला। स्कैन किए हुए PDF के लिए OCR की ज़रूरत हो सकती है।");
+      return;
+    }
+    selectedFileText=text.slice(0,MAX_FILE_CHARS);
+    selectedFileName=file.name;
+    showTemporaryMessage("फ़ाइल तैयार है: "+file.name+
+      " — अब अपना सवाल लिखकर भेजें।"+
+      (text.length>MAX_FILE_CHARS?" शुरुआती अंश ही इस्तेमाल होगा.":""));
+    $("userInput").focus();
+    if(!$("userInput").value.trim()){
+      $("userInput").value="इस फ़ाइल का सारांश बनाओ, मुख्य बातें बताओ और ज़रूरी कार्रवाई सुझाओ।";
+    }
+  }catch(error){
+    console.error("File read error:",error);
+    showTemporaryMessage("फ़ाइल पढ़ने में समस्या हुई: "+error.message);
+  }
+});
+
+/* पिछली बातचीत खोलें */
+if(conversations.length){
+  currentChatId=conversations[0].id;
+  renderChatList();
+  renderMessages();
+}else{
+  createChat();
+}
+</script>
+</body>
+</html>
