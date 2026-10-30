@@ -51,6 +51,10 @@ button{transition:border-color .15s,background .15s}
 .side-tools{display:grid;gap:7px}
 .side-btn{font-size:12px;color:#d6d8df}
 .side-btn:hover,.tool-btn:hover,.action-btn:hover,.suggestion:hover{border-color:var(--gold2)}
+
+.backup-tools{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
+.backup-tools button{border:1px solid var(--line);border-radius:9px;padding:8px 6px;background:var(--panel,rgba(255,255,255,.04));color:var(--text);font-size:12px;cursor:pointer}
+.backup-tools button:hover{border-color:var(--gold)}
 .sidebar-bottom{margin-top:auto;border-top:1px solid var(--line);
   padding:12px 7px;color:#818795;font-size:11px;line-height:1.7}
 .main{min-width:0;min-height:100vh;display:flex;flex-direction:column}
@@ -173,6 +177,11 @@ textarea::placeholder{color:#757b89}
       <strong class="gold">AURA AI</strong><br>
       आपका AI workspace<br>
       <span id="savedStatus">बातचीत ब्राउज़र में सेव होती है।</span>
+      <div class="backup-tools" aria-label="Backup and restore">
+        <button id="downloadBackupBtn" type="button">⬇ Backup लें</button>
+        <button id="restoreBackupBtn" type="button">↻ Restore करें</button>
+        <input id="restoreBackupFile" type="file" accept=".json,application/json" hidden>
+      </div>
     </div>
   </aside>
 
@@ -326,6 +335,110 @@ function saveConversations(){
     $("savedStatus").textContent="बातचीत सेव नहीं हो सकी। ब्राउज़र स्टोरेज जाँचें।";
   }
 }
+
+function downloadConversationBackup(){
+  if(!activeAuthUid){
+    alert("पहले Google खाते से Login करें।");
+    return;
+  }
+  try{
+    const backup = {
+      app: "AURA AI",
+      backupVersion: 1,
+      backupType: "chat-history",
+      ownerUid: activeAuthUid,
+      exportedAt: new Date().toISOString(),
+      conversations: conversations
+    };
+    const blob = new Blob([JSON.stringify(backup, null, 2)], {type:"application/json"});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "AURA_AI_Chat_Backup_" + new Date().toISOString().slice(0,10) + ".json";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+    $("savedStatus").textContent = "Chat backup फ़ाइल डाउनलोड हो गई।";
+  }catch(error){
+    console.error("Backup export failed:", error);
+    alert("Backup फ़ाइल नहीं बन सकी। कृपया दोबारा कोशिश करें।");
+  }
+}
+
+function restoreConversationBackup(file){
+  if(!activeAuthUid){
+    alert("पहले Google खाते से Login करें।");
+    return;
+  }
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = function(){
+    try{
+      const backup = JSON.parse(String(reader.result || ""));
+      if(!backup || backup.app !== "AURA AI" || backup.backupVersion !== 1 ||
+         backup.backupType !== "chat-history" || !Array.isArray(backup.conversations)){
+        throw new Error("यह AURA AI chat backup फ़ाइल नहीं है।");
+      }
+      if(backup.ownerUid !== activeAuthUid){
+        throw new Error("यह backup किसी दूसरे Google खाते का है। सही खाते से Login करें।");
+      }
+      const valid = backup.conversations.every(chat =>
+        chat && typeof chat.id === "string" &&
+        typeof chat.title === "string" &&
+        Array.isArray(chat.messages) &&
+        chat.messages.every(message =>
+          message && typeof message.role === "string" &&
+          typeof message.content === "string"
+        )
+      );
+      if(!valid) throw new Error("Backup में बातचीत का डेटा सही नहीं है।");
+
+      const confirmed = confirm(
+        "इस backup में " + backup.conversations.length +
+        " बातचीत हैं। Restore करने पर इस Google खाते की मौजूदा browser chat history बदल जाएगी। " +
+        "पहले मौजूदा history का backup ले लें। जारी रखें?"
+      );
+      if(!confirmed) return;
+
+      conversations = backup.conversations;
+      saveConversations();
+      currentChatId = conversations.length ? conversations[0].id : null;
+      if(currentChatId){
+        renderChatList();
+        renderMessages();
+      }else{
+        renderChatList();
+        renderMessages();
+        createChat();
+      }
+      $("savedStatus").textContent = "Chat history restore हो गई।";
+      alert("AURA AI की chat history restore हो गई।");
+    }catch(error){
+      console.error("Backup restore failed:", error);
+      alert(error.message || "Backup restore नहीं हो सका।");
+    }finally{
+      $("restoreBackupFile").value = "";
+    }
+  };
+  reader.onerror = function(){
+    alert("Backup फ़ाइल पढ़ी नहीं जा सकी।");
+    $("restoreBackupFile").value = "";
+  };
+  reader.readAsText(file);
+}
+
+$("downloadBackupBtn").addEventListener("click", downloadConversationBackup);
+$("restoreBackupBtn").addEventListener("click", function(){
+  if(!activeAuthUid){
+    alert("पहले Google खाते से Login करें।");
+    return;
+  }
+  $("restoreBackupFile").click();
+});
+$("restoreBackupFile").addEventListener("change", function(event){
+  restoreConversationBackup(event.target.files && event.target.files[0]);
+});
 
 window.addEventListener("aura-auth-changed", function(event){
   const uid = event.detail && event.detail.uid ? String(event.detail.uid) : null;
