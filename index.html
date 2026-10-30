@@ -128,10 +128,25 @@ textarea::placeholder{color:#757b89}
   .composer-wrap{padding:9px 12px 13px}
   .suggestions{grid-template-columns:1fr}
 }
+
+.auth-gate{position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;padding:22px;background:rgba(7,8,12,.96)}
+.auth-card{width:min(440px,100%);padding:30px;border:1px solid #51452e;border-radius:20px;background:#12141a;text-align:center;box-shadow:0 24px 80px #0009}
+.auth-logo{font-size:38px;color:var(--gold);margin-bottom:10px}.auth-card h2{margin:0 0 10px}.auth-card p{color:var(--muted);line-height:1.7}.google-login{width:100%;border:1px solid var(--gold2);border-radius:11px;background:#201b13;color:var(--gold);padding:13px;font-weight:700}.auth-error{color:var(--red)!important;font-size:12px;overflow-wrap:anywhere}.account-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}.account-email{font-size:11px;color:var(--muted);max-width:190px;overflow-wrap:anywhere}.logout-btn{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:7px 10px;font-size:11px}
+
 </style>
 </head>
 
 <body>
+<div class="auth-gate" id="authGate">
+  <div class="auth-card">
+    <div class="auth-logo">✦</div>
+    <h2>AURA AI Login</h2>
+    <p>अपनी बातचीत शुरू करने के लिए Google खाते से सुरक्षित रूप से साइन इन करें।</p>
+    <button class="google-login" id="googleLoginBtn" type="button">Google से Login करें</button>
+    <p class="auth-error" id="authError" role="status" aria-live="polite"></p>
+    <p style="font-size:11px">आपकी AURA AI की मौजूदा सुविधाएँ बरकरार रखने के लिए यह Login जोड़ा जा रहा है।</p>
+  </div>
+</div>
 <div class="app">
   <aside class="sidebar">
     <div class="brand">
@@ -164,7 +179,7 @@ textarea::placeholder{color:#757b89}
   <main class="main">
     <header class="topbar">
       <div class="top-title">AI Workspace <span class="gold">✦</span></div>
-      <div class="status" id="connectionStatus">● तैयार</div>
+      <div class="account-tools"><span class="account-email" id="accountEmail"></span><button class="logout-btn" id="logoutBtn" type="button" hidden>Logout</button><span class="status" id="connectionStatus">● तैयार</span></div>
     </header>
 
     <section class="workspace">
@@ -224,6 +239,51 @@ textarea::placeholder{color:#757b89}
   </main>
 </div>
 
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+const firebaseConfig = {
+  apiKey: "AIzaSyD694I6YJVV8z62ZakP3gRpbShiDDy2Qdk",
+  authDomain: "aura-ai-login-62b6f.firebaseapp.com",
+  projectId: "aura-ai-login-62b6f",
+  storageBucket: "aura-ai-login-62b6f.firebasestorage.app",
+  messagingSenderId: "995268486169",
+  appId: "1:995268486169:web:cc35daff9a5fb861c8b688"
+};
+const auth = getAuth(initializeApp(firebaseConfig));
+const provider = new GoogleAuthProvider();
+let currentUser = null;
+window.auraGetIdToken = async function(){
+  if (!currentUser) throw new Error("Google Login आवश्यक है।");
+  return await currentUser.getIdToken();
+};
+document.getElementById("googleLoginBtn").addEventListener("click", async function(){
+  const button = this;
+  const errorBox = document.getElementById("authError");
+  button.disabled = true; button.textContent = "Login हो रहा है…"; errorBox.textContent = "";
+  try { await signInWithPopup(auth, provider); }
+  catch (error) {
+    console.error("AURA Firebase login error", error);
+    errorBox.textContent = error.code === "auth/unauthorized-domain"
+      ? "इस वेबसाइट का domain Firebase में Authorized Domains में जोड़ना होगा।"
+      : "Login नहीं हो सका: " + (error.message || error.code || "कृपया फिर कोशिश करें।");
+  } finally { button.disabled = false; button.textContent = "Google से Login करें"; }
+});
+document.getElementById("logoutBtn").addEventListener("click", async function(){
+  try { await signOut(auth); } catch(error) { document.getElementById("authError").textContent = "Logout नहीं हो सका। फिर कोशिश करें।"; }
+});
+onAuthStateChanged(auth, function(user){
+  currentUser = user || null;
+  const gate = document.getElementById("authGate");
+  const email = document.getElementById("accountEmail");
+  const logout = document.getElementById("logoutBtn");
+  gate.style.display = user ? "none" : "flex";
+  email.textContent = user ? (user.email || "Google account") : "";
+  logout.hidden = !user;
+  if (!user) document.getElementById("authError").textContent = "";
+  window.dispatchEvent(new CustomEvent("aura-auth-changed", { detail: { signedIn: !!user, uid: user ? user.uid : null } }));
+});
+</script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script>
 "use strict";
@@ -232,8 +292,9 @@ textarea::placeholder{color:#757b89}
 const API_URL =
 "https://script.google.com/macros/s/AKfycbxjT4lFK701nBdc41hVf-ol3tgcJU8AlpvXttJhRhexZ1IQ1E-PZvb3PZS-APMbFWYC/exec";
 
-const STORAGE_KEY = "aura_ai_conversations_v2";
-const MAX_HISTORY = 12;
+let STORAGE_KEY = "aura_ai_conversations_v2_signed_out";
+let activeAuthUid = null;
+const MAX_HISTORY = 4;
 const MAX_FILE_CHARS = 12000;
 
 const $ = id => document.getElementById(id);
@@ -265,6 +326,17 @@ function saveConversations(){
     $("savedStatus").textContent="बातचीत सेव नहीं हो सकी। ब्राउज़र स्टोरेज जाँचें।";
   }
 }
+
+window.addEventListener("aura-auth-changed", function(event){
+  const uid = event.detail && event.detail.uid ? String(event.detail.uid) : null;
+  activeAuthUid = uid;
+  STORAGE_KEY = uid ? "aura_ai_conversations_v2_" + uid : "aura_ai_conversations_v2_signed_out";
+  conversations = uid ? loadConversations() : [];
+  currentChatId = conversations.length ? conversations[0].id : null;
+  if (currentChatId) { renderChatList(); renderMessages(); }
+  else if (uid) createChat();
+  else { renderChatList(); renderMessages(); }
+});
 
 function activeChat(){
   return conversations.find(c=>c.id===currentChatId);
@@ -306,20 +378,33 @@ function escapeHtml(value){
 }
 
 function formatText(value){
-  let safe=escapeHtml(value);
-  safe=safe.replace(/```([\s\S]*?)```/g,
-    (_,code)=>"<pre><code>"+code+"</code></pre>");
-  safe=safe.replace(/`([^`\n]+)`/g,"<code>$1</code>");
-  safe=safe.replace(/\*\*([^*]+)\*\*/g,"<strong>$1</strong>");
-  safe=safe.replace(/\*([^*\n]+)\*/g,"<em>$1</em>");
-  safe=safe.replace(/^### (.+)$/gm,"<strong>$1</strong>");
-  safe=safe.replace(/^## (.+)$/gm,"<strong>$1</strong>");
-  safe=safe.replace(/^# (.+)$/gm,"<strong>$1</strong>");
-  safe=safe.replace(/^\s*[-•] (.+)$/gm,"• $1");
-  safe=safe.replace(/\n/g,"<br>");
+  let source = String(value ?? "");
+
+  // Timing footer में गलत line breaks ठीक करें
+  if (source.includes("AURA AI Timing")) {
+    source = source
+      .replace(/\\r\\n/g, "\n")
+      .replace(/\\n/g, "\n")
+      .replace(/\\r/g, "\n")
+      .replace(/\\\r?\n/g, "\n")
+      .replace(/\\[ \t]*(?=\r?\n|$)/g, "");
+  }
+
+  let safe = escapeHtml(source);
+
+  safe = safe.replace(/```([\s\S]*?)```/g,
+    (_, code) => "<pre><code>" + code + "</code></pre>");
+  safe = safe.replace(/`([^`\n]+)`/g, "<code>$1</code>");
+  safe = safe.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+  safe = safe.replace(/\*([^*\n]+)\*/g, "<em>$1</em>");
+  safe = safe.replace(/^### (.+)$/gm, "<strong>$1</strong>");
+  safe = safe.replace(/^## (.+)$/gm, "<strong>$1</strong>");
+  safe = safe.replace(/^# (.+)$/gm, "<strong>$1</strong>");
+  safe = safe.replace(/^\s*[-•] (.+)$/gm, "• $1");
+  safe = safe.replace(/\n/g, "<br>");
+
   return safe;
 }
-
 function renderMessages(){
   const chat=activeChat();
   const messagesEl=$("messages");
@@ -407,6 +492,7 @@ function removeLoading(id){
 
 async function sendMessage(prefilledText){
   if(isSending)return;
+  if(!window.auraGetIdToken){ showTemporaryMessage("Login प्रणाली तैयार हो रही है। कुछ सेकंड बाद फिर कोशिश करें।"); return; }
   const input=$("userInput");
   let message=String(typeof prefilledText==="string"?prefilledText:input.value).trim();
 
@@ -440,7 +526,7 @@ async function sendMessage(prefilledText){
     const response=await fetch(API_URL,{
       method:"POST",
       headers:{"Content-Type":"text/plain;charset=utf-8"},
-      body:JSON.stringify({message,history})
+      body:JSON.stringify({message,history,idToken:await window.auraGetIdToken()})
     });
     if(!response.ok)throw new Error("HTTP "+response.status);
     const data=await response.json();
