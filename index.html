@@ -345,22 +345,42 @@ function makeId(){
   return Date.now().toString(36)+Math.random().toString(36).slice(2,8);
 }
 
+function isSensitiveMemoryCommand(value){
+  return /^\/(remember|memory|forget|migrate)\b/i.test(String(value||"").trim());
+}
+
+function sanitizeConversations(chats){
+  if(!Array.isArray(chats)) return [];
+  return chats.map(chat=>{
+    if(!chat || !Array.isArray(chat.messages)) return chat;
+    return Object.assign({},chat,{
+      title:isSensitiveMemoryCommand(chat.title)?"Memory command":chat.title,
+      messages:chat.messages.map(message=>{
+      if(message && message.role==="user" && isSensitiveMemoryCommand(message.content)){
+        return Object.assign({},message,{content:"[Memory command hidden for PIN safety]"});
+      }
+      return message;
+    })});
+  });
+}
+
 function loadConversations(){
   try{
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY)||"[]");
-    return Array.isArray(saved)?saved:[];
+    return Array.isArray(saved)?sanitizeConversations(saved):[];
   }catch(e){return []}
 }
 
 function saveConversations(){
   try{
-    const serialized = JSON.stringify(conversations);
+    const safeConversations = sanitizeConversations(conversations);
+    const serialized = JSON.stringify(safeConversations);
     localStorage.setItem(STORAGE_KEY,serialized);
     // Separate rolling local backup: updated whenever chats are saved.
     try{
       localStorage.setItem(STORAGE_KEY + "_auto_backup", JSON.stringify({
         app:"AURA AI", backupVersion:1, backupType:"local-chat-safety-copy",
-        ownerUid:activeAuthUid, savedAt:new Date().toISOString(), conversations:conversations
+        ownerUid:activeAuthUid, savedAt:new Date().toISOString(), conversations:safeConversations
       }));
       $("savedStatus").textContent="बातचीत और Local Auto Backup सेव हैं।";
     }catch(backupError){
@@ -410,7 +430,7 @@ async function createFullBackup(){
     backupType:"full",
     ownerUid:activeAuthUid,
     exportedAt:new Date().toISOString(),
-    conversations:conversations,
+    conversations:sanitizeConversations(conversations),
     memories:memories
   };
 }
@@ -482,6 +502,7 @@ async function restoreBackupObject(backup){
 
   const previousConversations = conversations;
   const previousStorage = localStorage.getItem(STORAGE_KEY);
+  const restoredConversations = sanitizeConversations(backup.conversations);
   let previousMemories = null;
   let memoryChanged = false;
 
@@ -494,12 +515,12 @@ async function restoreBackupObject(backup){
     }
 
     // Persist first. If this fails, the server Memory is rolled back below.
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(backup.conversations));
-    conversations = backup.conversations;
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(restoredConversations));
+    conversations = restoredConversations;
     try{
       localStorage.setItem(STORAGE_KEY + "_auto_backup",JSON.stringify({
         app:"AURA AI",backupVersion:1,backupType:"local-chat-safety-copy",
-        ownerUid:activeAuthUid,savedAt:new Date().toISOString(),conversations:conversations
+        ownerUid:activeAuthUid,savedAt:new Date().toISOString(),conversations:restoredConversations
       }));
     }catch(localBackupError){ /* Main restored chat data is already saved. */ }
 
@@ -542,7 +563,7 @@ async function restoreLocalAutoBackup(){
     }
     await restoreBackupObject({
       app:"AURA AI", backupVersion:1, backupType:"chat-history",
-      ownerUid:activeAuthUid, conversations:localBackup.conversations
+      ownerUid:activeAuthUid, conversations:sanitizeConversations(localBackup.conversations)
     });
   }catch(error){
     console.error("AURA local restore failed:",error);
@@ -838,7 +859,8 @@ function addMessage(role,content){
 function getHistoryForApi(chat){
   return chat.messages
     .filter(m=>(m.role==="user"||m.role==="assistant")&&
-      typeof m.content==="string"&&m.content.trim())
+      typeof m.content==="string"&&m.content.trim()&&
+      !(m.role==="user"&&isSensitiveMemoryCommand(m.content)))
     .slice(-MAX_HISTORY)
     .map(m=>({role:m.role,content:m.content}));
 }
@@ -879,7 +901,9 @@ async function sendMessage(prefilledText){
   $("sendBtn").textContent="सोच रहा है…";
   setStatus("जवाब तैयार हो रहा है","var(--gold)");
   input.value="";
-  addMessage("user",message);
+  addMessage("user",isSensitiveMemoryCommand(message)
+    ? "[Memory command भेजा गया — PIN chat history में सेव नहीं किया गया]"
+    : message);
 
   const loadingId="loading-"+makeId();
   const loading=document.createElement("div");
