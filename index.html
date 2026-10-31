@@ -251,7 +251,7 @@ textarea::placeholder{color:#757b89}
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js";
-import { getAuth, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
+import { getAuth, GoogleAuthProvider, signInWithPopup, reauthenticateWithPopup, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js";
 const firebaseConfig = {
   apiKey: "AIzaSyD694I6YJVV8z62ZakP3gRpbShiDDy2Qdk",
   authDomain: "aura-ai-login-62b6f.firebaseapp.com",
@@ -274,7 +274,9 @@ window.auraRequestDriveAccess = async function(){
   const driveProvider = new GoogleAuthProvider();
   driveProvider.addScope("https://www.googleapis.com/auth/drive.file");
   driveProvider.setCustomParameters({ prompt: "consent" });
-  const result = await signInWithPopup(auth, driveProvider);
+  // The user is already signed in. Re-authenticate the existing Firebase user
+  // so Google can return the incremental Drive OAuth access token.
+  const result = await reauthenticateWithPopup(currentUser, driveProvider);
   const credential = GoogleAuthProvider.credentialFromResult(result);
   if (!credential || !credential.accessToken) {
     throw new Error("Google Drive access token नहीं मिला। Drive अनुमति फिर से दें।");
