@@ -258,6 +258,8 @@ textarea::placeholder{color:#757b89}
                 title="बोलकर लिखें" aria-label="बोलकर लिखें">🎙 बोलें</button>
               <button class="action-btn" id="speakBtn" type="button"
                 title="जवाब सुनें" aria-label="जवाब सुनें">🔊 सुनें</button>
+              <button class="action-btn" id="webSearchBtn" type="button"
+                title="लिखे हुए सवाल को Google पर खोजें" aria-label="Web Search">🌐 Web Search</button>
               <button class="send-btn" id="sendBtn" type="button">भेजें ↑</button>
             </div>
           </div>
@@ -421,25 +423,18 @@ function saveConversations(){
    - Drive auto-backup runs every 15 minutes only while this page is open.
    ========================================================= */
 
-let projectData = { version:1, revision:0, projects:[] };
-let projectLocalChangeSeq = 0;
+let projectData = { version:1, projects:[] };
 let editingProjectId = null;
 let projectPageOpen = false;
 let projectSaveQueue = Promise.resolve();
 
-async function callProjectApi(action, data, expectedRevision){
+async function callProjectApi(action, data){
   if(!activeAuthUid) throw new Error("पहले Google खाते से Login करें।");
   const body={action:action,idToken:await window.auraGetIdToken()};
-  if(action==="project_save") { body.projectData=data; body.expectedRevision=Number.isSafeInteger(expectedRevision) ? expectedRevision : (Number(data.revision)||0); }
+  if(action==="project_save") body.projectData=data;
   const response=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body)});
   if(!response.ok) throw new Error("Project API HTTP "+response.status);
   const result=await response.json();
-  if(result && result.conflict===true && result.projectData && Array.isArray(result.projectData.projects)) {
-    const conflictError=new Error(result.error || "Project data दूसरे टैब में बदल चुका है।");
-    conflictError.projectConflict=true;
-    conflictError.latestProjectData=result.projectData;
-    throw conflictError;
-  }
   if(!result || result.ok!==true || !result.projectData || !Array.isArray(result.projectData.projects)) throw new Error(result && result.error ? result.error : "Project data का Server जवाब सही नहीं है।");
   return result.projectData;
 }
@@ -464,27 +459,10 @@ function renderProjectWorkspace(){
 }
 async function saveProjectWorkspace(){
   renderProjectWorkspace();
-  const thisChange = ++projectLocalChangeSeq;
-  projectSaveQueue=projectSaveQueue.catch(()=>{}).then(async()=>{
-    // Snapshot only when this queued save starts, so earlier queued saves
-    // cannot overwrite edits made while they were waiting.
-    const snapshot=JSON.parse(JSON.stringify(projectData));
-    const saved=await callProjectApi("project_save",snapshot);
-    if (projectLocalChangeSeq === thisChange) projectData=saved;
-    else projectData.revision=saved.revision;
-    if(projectPageOpen)renderProjectWorkspace();
-  });
+  const snapshot=JSON.parse(JSON.stringify(projectData));
+  projectSaveQueue=projectSaveQueue.catch(()=>{}).then(async()=>{const saved=await callProjectApi("project_save",snapshot);projectData=saved;if(projectPageOpen)renderProjectWorkspace();});
   try{await projectSaveQueue;$ ("savedStatus").textContent="Projects और Tasks Server पर सेव हैं।";}
-  catch(error){
-    console.error("AURA project save failed",error);
-    try{
-      projectData=error.projectConflict && error.latestProjectData
-        ? error.latestProjectData : await callProjectApi("project_get");
-      renderProjectWorkspace();
-    }catch(reloadError){console.error("AURA project reload after save failure failed",reloadError);}
-    alert("Project/Task सेव नहीं हुआ: "+(error.message||error)+"\nसुरक्षा के लिए सर्वर का नवीनतम डेटा दिखाया गया है। अपने बदलाव जाँचकर फिर से लागू करें।");
-    throw error;
-  }
+  catch(error){console.error("AURA project save failed",error);try{projectData=await callProjectApi("project_get");renderProjectWorkspace();}catch(reloadError){}alert("Project/Task सेव नहीं हुआ: "+(error.message||error)+"\nसर्वर पर मौजूद पुराना डेटा वापस दिखाया गया है।");throw error;}
 }
 async function loadProjectWorkspace(){
   if(!activeAuthUid)return;
@@ -580,23 +558,7 @@ function validateBackupObject(backup){
         throw new Error("Backup में Memory entry सही नहीं है।");
       }
     });
-    if(backup.backupVersion === 3){
-      const pd=backup.projectData;
-      if(!pd || typeof pd!=="object" || !Array.isArray(pd.projects) || pd.projects.length>100) throw new Error("Backup में Project data सही नहीं है।");
-      const idPattern=/^[A-Za-z0-9_-]{1,100}$/;
-      const projectIds=new Set();
-      pd.projects.forEach(p=>{
-        if(!p || typeof p.id!=="string" || !idPattern.test(p.id) || projectIds.has(p.id) || typeof p.name!=="string" || !p.name.trim() || p.name.length>160 || typeof p.description!=="string" || p.description.length>1000 || !Array.isArray(p.tasks) || p.tasks.length>500) throw new Error("Backup में Project की जानकारी सही नहीं है।");
-        projectIds.add(p.id);
-        const taskIds=new Set();
-        p.tasks.forEach(task=>{
-          if(!task || typeof task.id!=="string" || !idPattern.test(task.id) || taskIds.has(task.id) || typeof task.title!=="string" || !task.title.trim() || task.title.length>200 || typeof task.done!=="boolean" || typeof task.notes!=="string" || task.notes.length>1000 || typeof task.dueDate!=="string" || task.dueDate.length>20) throw new Error("Backup में Task की जानकारी सही नहीं है।");
-          taskIds.add(task.id);
-        });
-      });
-      const projectBytes=new TextEncoder().encode(JSON.stringify({version:1,projects:pd.projects})).length;
-      if(projectBytes>8000) throw new Error("Backup का Project/Task डेटा 8,000 bytes से बड़ा है।");
-    }
+    if(backup.backupVersion === 3 && (!backup.projectData || !Array.isArray(backup.projectData.projects) || backup.projectData.projects.length > 100)) throw new Error("Backup में Project data सही नहीं है।");
   }else{
     throw new Error("Backup version समर्थित नहीं है।");
   }
@@ -639,9 +601,9 @@ async function restoreBackupObject(backup){
     }
     if(includesProjects){
       previousProjectData = await callProjectApi("project_get");
-      const restoredProjectData = await callProjectApi("project_save",backup.projectData,previousProjectData.revision);
+      await callProjectApi("project_save",backup.projectData);
       projectsChanged = true;
-      projectData = restoredProjectData;
+      projectData = backup.projectData;
       if(projectPageOpen) renderProjectWorkspace();
     }
 
@@ -671,7 +633,7 @@ async function restoreBackupObject(backup){
       else localStorage.setItem(STORAGE_KEY,previousStorage);
     }catch(storageRollbackError){ console.error("Chat rollback failed:",storageRollbackError); }
     if(projectsChanged && previousProjectData){
-      try{ await callProjectApi("project_save",previousProjectData,projectData.revision); projectData=previousProjectData; }
+      try{ await callProjectApi("project_save",previousProjectData); projectData=previousProjectData; }
       catch(projectRollbackError){ console.error("Project data rollback failed:",projectRollbackError); }
     }
     if(memoryChanged && previousMemories){
@@ -850,7 +812,7 @@ window.addEventListener("aura-auth-changed", function(event){
   const previousUid = activeAuthUid;
   activeAuthUid = uid;
   if(uid !== previousUid){
-    projectData = { version:1, revision:0, projects:[] };
+    projectData = { version:1, projects:[] };
     closeProjectWorkspace();
     driveAccessToken = null;
     driveTokenExpiresAt = 0;
@@ -1113,6 +1075,25 @@ document.querySelectorAll("[data-tool]").forEach(button=>{
   button.addEventListener("click",()=>runTool(button.dataset.tool));
 });
 $("sendBtn").addEventListener("click",()=>sendMessage());
+
+// Manual, free web search: opens Google in a new tab; never calls the AI backend.
+$("webSearchBtn").addEventListener("click",()=>{
+  const query=$("userInput").value.trim();
+  if(!query){
+    showTemporaryMessage("पहले ऊपर अपना सवाल लिखें, फिर Web Search दबाएँ।");
+    $("userInput").focus();
+    return;
+  }
+  const searchUrl="https://www.google.com/search?q="+encodeURIComponent(query);
+  const searchTab=window.open(searchUrl,"_blank");
+  if(searchTab){
+    searchTab.opener=null;
+    showTemporaryMessage("Google Search नए टैब में खुल गया है। जानकारी देखकर चाहें तो उसे कॉपी करके AURA AI में भेजें।");
+  }else{
+    showTemporaryMessage("नया टैब ब्राउज़र ने रोका है। Pop-ups की अनुमति देकर फिर कोशिश करें।");
+  }
+});
+
 $("newChatBtn").addEventListener("click",createChat);
 $("userInput").addEventListener("keydown",event=>{
   if(event.key==="Enter"&&!event.shiftKey){
