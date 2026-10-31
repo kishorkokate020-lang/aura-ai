@@ -51,10 +51,6 @@ button{transition:border-color .15s,background .15s}
 .side-tools{display:grid;gap:7px}
 .side-btn{font-size:12px;color:#d6d8df}
 .side-btn:hover,.tool-btn:hover,.action-btn:hover,.suggestion:hover{border-color:var(--gold2)}
-
-.backup-tools{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
-.backup-tools button{border:1px solid var(--line);border-radius:9px;padding:8px 6px;background:var(--panel,rgba(255,255,255,.04));color:var(--text);font-size:12px;cursor:pointer}
-.backup-tools button:hover{border-color:var(--gold)}
 .sidebar-bottom{margin-top:auto;border-top:1px solid var(--line);
   padding:12px 7px;color:#818795;font-size:11px;line-height:1.7}
 .main{min-width:0;min-height:100vh;display:flex;flex-direction:column}
@@ -177,18 +173,23 @@ textarea::placeholder{color:#757b89}
       <strong class="gold">AURA AI</strong><br>
       आपका AI workspace<br>
       <span id="savedStatus">बातचीत ब्राउज़र में सेव होती है।</span>
-      <div class="backup-tools" aria-label="Backup and restore">
-        <button id="downloadBackupBtn" type="button">⬇ Backup लें</button>
-        <button id="restoreBackupBtn" type="button">↻ Restore करें</button>
-        <input id="restoreBackupFile" type="file" accept=".json,application/json" hidden>
-      </div>
     </div>
   </aside>
 
   <main class="main">
     <header class="topbar">
       <div class="top-title">AI Workspace <span class="gold">✦</span></div>
-      <div class="account-tools"><span class="account-email" id="accountEmail"></span><button class="logout-btn" id="logoutBtn" type="button" hidden>Logout</button><span class="status" id="connectionStatus">● तैयार</span></div>
+      <div class="account-tools">
+        <span class="account-email" id="accountEmail"></span>
+        <button class="logout-btn" id="downloadBackupBtn" type="button">Backup डाउनलोड</button>
+        <button class="logout-btn" id="restoreBackupBtn" type="button">File Restore</button>
+        <button class="logout-btn" id="localRestoreBtn" type="button">Local Restore</button>
+        <button class="logout-btn" id="driveBackupBtn" type="button">Drive Backup</button>
+        <button class="logout-btn" id="driveRestoreBtn" type="button">Drive Restore</button>
+        <input id="restoreBackupFile" type="file" accept=".json,application/json" hidden>
+        <button class="logout-btn" id="logoutBtn" type="button" hidden>Logout</button>
+        <span class="status" id="connectionStatus">● तैयार</span>
+      </div>
     </header>
 
     <section class="workspace">
@@ -266,6 +267,21 @@ window.auraGetIdToken = async function(){
   if (!currentUser) throw new Error("Google Login आवश्यक है।");
   return await currentUser.getIdToken();
 };
+// Drive permission is requested only after the user presses Drive Backup/Restore.
+// Ordinary Google login does not request Google Drive access.
+window.auraRequestDriveAccess = async function(){
+  if (!currentUser) throw new Error("पहले Google Login करें।");
+  const driveProvider = new GoogleAuthProvider();
+  driveProvider.addScope("https://www.googleapis.com/auth/drive.file");
+  driveProvider.setCustomParameters({ prompt: "consent" });
+  const result = await signInWithPopup(auth, driveProvider);
+  const credential = GoogleAuthProvider.credentialFromResult(result);
+  if (!credential || !credential.accessToken) {
+    throw new Error("Google Drive access token नहीं मिला। Drive अनुमति फिर से दें।");
+  }
+  currentUser = result.user;
+  return credential.accessToken;
+};
 document.getElementById("googleLoginBtn").addEventListener("click", async function(){
   const button = this;
   const errorBox = document.getElementById("authError");
@@ -274,8 +290,10 @@ document.getElementById("googleLoginBtn").addEventListener("click", async functi
   catch (error) {
     console.error("AURA Firebase login error", error);
     errorBox.textContent = error.code === "auth/unauthorized-domain"
-      ? "इस वेबसाइट का domain Firebase में Authorized Domains में जोड़ना होगा।"
-      : "Login नहीं हो सका: " + (error.message || error.code || "कृपया फिर कोशिश करें।");
+      ? (window.location.protocol === "file:"
+          ? "यह HTML फ़ाइल सीधे Downloads से खुली है। Google Login के लिए GitHub Pages वाली वेबसाइट खोलें।"
+          : "Firebase project " + firebaseConfig.projectId + " में hostname " + window.location.hostname + " को Authorized Domains में जोड़ें।")
+      : "Login नहीं हो सका (" + (error.code || "unknown") + "): " + (error.message || "कृपया फिर कोशिश करें।");
   } finally { button.disabled = false; button.textContent = "Google से Login करें"; }
 });
 document.getElementById("logoutBtn").addEventListener("click", async function(){
@@ -315,6 +333,11 @@ let selectedFileName = "";
 let recognition = null;
 let isListening = false;
 let lastAssistantText = "";
+let driveAccessToken = null;
+let driveTokenExpiresAt = 0;
+let driveAutoTimer = null;
+let driveUploadInProgress = false;
+const DRIVE_AUTO_INTERVAL_MS = 15 * 60 * 1000;
 
 function makeId(){
   return Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -329,120 +352,350 @@ function loadConversations(){
 
 function saveConversations(){
   try{
-    localStorage.setItem(STORAGE_KEY,JSON.stringify(conversations));
-    $("savedStatus").textContent="बातचीत इस ब्राउज़र में सेव है।";
+    const serialized = JSON.stringify(conversations);
+    localStorage.setItem(STORAGE_KEY,serialized);
+    // Separate rolling local backup: updated whenever chats are saved.
+    try{
+      localStorage.setItem(STORAGE_KEY + "_auto_backup", JSON.stringify({
+        app:"AURA AI", backupVersion:1, backupType:"local-chat-safety-copy",
+        ownerUid:activeAuthUid, savedAt:new Date().toISOString(), conversations:conversations
+      }));
+      $("savedStatus").textContent="बातचीत और Local Auto Backup सेव हैं।";
+    }catch(backupError){
+      $("savedStatus").textContent="बातचीत सेव है; Local Auto Backup के लिए browser storage कम है।";
+    }
   }catch(e){
     $("savedStatus").textContent="बातचीत सेव नहीं हो सकी। ब्राउज़र स्टोरेज जाँचें।";
   }
 }
 
-function downloadConversationBackup(){
-  if(!activeAuthUid){
-    alert("पहले Google खाते से Login करें।");
-    return;
+/* =========================================================
+   AURA AI BACKUP / RESTORE
+   - Full downloadable backup includes browser chats + server memory.
+   - Local rolling backup is updated by saveConversations().
+   - Drive access is incremental and requested only on user action.
+   - Drive auto-backup runs every 15 minutes only while this page is open.
+   ========================================================= */
+
+function backupFileName(){
+  return "AURA_AI_Backup_" + new Date().toISOString().replace(/[:.]/g,"-") + ".json";
+}
+
+async function callMemoryApi(action, memories){
+  if(!activeAuthUid) throw new Error("पहले Google खाते से Login करें।");
+  const body = { action:action, idToken:await window.auraGetIdToken() };
+  if(action === "memory_restore") body.memories = memories;
+  const response = await fetch(API_URL, {
+    method:"POST",
+    headers:{"Content-Type":"text/plain;charset=utf-8"},
+    body:JSON.stringify(body)
+  });
+  if(!response.ok) throw new Error("Memory API HTTP " + response.status);
+  const data = await response.json();
+  if(!data || data.ok !== true || !Array.isArray(data.memories)){
+    throw new Error(data && data.error ? data.error : "Server Memory का जवाब सही नहीं है।");
   }
+  return data.memories;
+}
+
+async function createFullBackup(){
+  if(!activeAuthUid) throw new Error("पहले Google खाते से Login करें।");
+  // Fail the complete export if server memory cannot be fetched.
+  const memories = await callMemoryApi("memory_export");
+  return {
+    app:"AURA AI",
+    backupVersion:2,
+    backupType:"full",
+    ownerUid:activeAuthUid,
+    exportedAt:new Date().toISOString(),
+    conversations:conversations,
+    memories:memories
+  };
+}
+
+function downloadJsonBackup(backup){
+  const blob = new Blob([JSON.stringify(backup,null,2)],{type:"application/json"});
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = backupFileName();
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),1500);
+}
+
+async function downloadConversationBackup(){
+  const button = $("downloadBackupBtn");
+  button.disabled = true;
   try{
-    const backup = {
-      app: "AURA AI",
-      backupVersion: 1,
-      backupType: "chat-history",
-      ownerUid: activeAuthUid,
-      exportedAt: new Date().toISOString(),
-      conversations: conversations
-    };
-    const blob = new Blob([JSON.stringify(backup, null, 2)], {type:"application/json"});
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.download = "AURA_AI_Chat_Backup_" + new Date().toISOString().slice(0,10) + ".json";
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
-    $("savedStatus").textContent = "Chat backup फ़ाइल डाउनलोड हो गई।";
+    const backup = await createFullBackup();
+    downloadJsonBackup(backup);
+    $("savedStatus").textContent = "Chats और Server Memory का पूरा Backup डाउनलोड हुआ।";
   }catch(error){
-    console.error("Backup export failed:", error);
-    alert("Backup फ़ाइल नहीं बन सकी। कृपया दोबारा कोशिश करें।");
-  }
+    console.error("AURA backup export failed:",error);
+    alert("पूरा Backup नहीं बन सका: " + (error.message || error) + "\n\nServer Memory export सफल हुए बिना अधूरा Backup डाउनलोड नहीं किया गया।");
+  }finally{ button.disabled = false; }
 }
 
-function restoreConversationBackup(file){
-  if(!activeAuthUid){
-    alert("पहले Google खाते से Login करें।");
-    return;
+function validateBackupObject(backup){
+  if(!backup || backup.app !== "AURA AI" || !Array.isArray(backup.conversations)){
+    throw new Error("यह AURA AI Backup फ़ाइल नहीं है।");
   }
-  if(!file) return;
-  const reader = new FileReader();
-  reader.onload = function(){
-    try{
-      const backup = JSON.parse(String(reader.result || ""));
-      if(!backup || backup.app !== "AURA AI" || backup.backupVersion !== 1 ||
-         backup.backupType !== "chat-history" || !Array.isArray(backup.conversations)){
-        throw new Error("यह AURA AI chat backup फ़ाइल नहीं है।");
+  if(backup.ownerUid !== activeAuthUid){
+    throw new Error("यह backup किसी दूसरे Google खाते का है। सही खाते से Login करें।");
+  }
+  if(backup.backupVersion === 1 && backup.backupType === "chat-history"){
+    // Backward compatibility with the earlier chat-only backup format.
+  }else if(backup.backupVersion === 2 && backup.backupType === "full" && Array.isArray(backup.memories)){
+    if(backup.memories.length > 20) throw new Error("Backup में Memory entries की संख्या सीमा से अधिक है।");
+    backup.memories.forEach(item=>{
+      if(!item || typeof item.text !== "string" || !item.text.trim() || item.text.trim().length > 250){
+        throw new Error("Backup में Memory entry सही नहीं है।");
       }
-      if(backup.ownerUid !== activeAuthUid){
-        throw new Error("यह backup किसी दूसरे Google खाते का है। सही खाते से Login करें।");
-      }
-      const valid = backup.conversations.every(chat =>
-        chat && typeof chat.id === "string" &&
-        typeof chat.title === "string" &&
-        Array.isArray(chat.messages) &&
-        chat.messages.every(message =>
-          message && typeof message.role === "string" &&
-          typeof message.content === "string"
-        )
-      );
-      if(!valid) throw new Error("Backup में बातचीत का डेटा सही नहीं है।");
+    });
+  }else{
+    throw new Error("Backup version समर्थित नहीं है।");
+  }
+  if(backup.conversations.length > 500) throw new Error("Backup में बातचीत की संख्या बहुत अधिक है।");
+  const validChats = backup.conversations.every(chat=>
+    chat && typeof chat.id === "string" && typeof chat.title === "string" &&
+    Array.isArray(chat.messages) && chat.messages.length <= 5000 &&
+    chat.messages.every(message=>message &&
+      (message.role === "user" || message.role === "assistant") &&
+      typeof message.content === "string")
+  );
+  if(!validChats) throw new Error("Backup में बातचीत का डेटा सही नहीं है।");
+}
 
-      const confirmed = confirm(
-        "इस backup में " + backup.conversations.length +
-        " बातचीत हैं। Restore करने पर इस Google खाते की मौजूदा browser chat history बदल जाएगी। " +
-        "पहले मौजूदा history का backup ले लें। जारी रखें?"
-      );
-      if(!confirmed) return;
+async function restoreBackupObject(backup){
+  validateBackupObject(backup);
+  const chatCount = backup.conversations.length;
+  const includesMemory = backup.backupVersion === 2 && backup.backupType === "full";
+  const confirmText = "इस Backup में " + chatCount + " बातचीत" +
+    (includesMemory ? " और " + backup.memories.length + " Memory entries" : "") +
+    " हैं। Restore करने पर इस Google खाते की मौजूदा chats" +
+    (includesMemory ? " और Server Memory" : "") + " बदल जाएँगी। पहले मौजूदा Backup ले लें। जारी रखें?";
+  if(!confirm(confirmText)) return false;
 
-      conversations = backup.conversations;
-      saveConversations();
-      currentChatId = conversations.length ? conversations[0].id : null;
-      if(currentChatId){
-        renderChatList();
-        renderMessages();
-      }else{
-        renderChatList();
-        renderMessages();
-        createChat();
-      }
-      $("savedStatus").textContent = "Chat history restore हो गई।";
-      alert("AURA AI की chat history restore हो गई।");
-    }catch(error){
-      console.error("Backup restore failed:", error);
-      alert(error.message || "Backup restore नहीं हो सका।");
-    }finally{
-      $("restoreBackupFile").value = "";
+  const previousConversations = conversations;
+  const previousStorage = localStorage.getItem(STORAGE_KEY);
+  let previousMemories = null;
+  let memoryChanged = false;
+
+  try{
+    if(includesMemory){
+      // Keep a rollback copy before changing server memory.
+      previousMemories = await callMemoryApi("memory_export");
+      await callMemoryApi("memory_restore",backup.memories);
+      memoryChanged = true;
     }
-  };
-  reader.onerror = function(){
-    alert("Backup फ़ाइल पढ़ी नहीं जा सकी।");
-    $("restoreBackupFile").value = "";
-  };
-  reader.readAsText(file);
+
+    // Persist first. If this fails, the server Memory is rolled back below.
+    localStorage.setItem(STORAGE_KEY,JSON.stringify(backup.conversations));
+    conversations = backup.conversations;
+    try{
+      localStorage.setItem(STORAGE_KEY + "_auto_backup",JSON.stringify({
+        app:"AURA AI",backupVersion:1,backupType:"local-chat-safety-copy",
+        ownerUid:activeAuthUid,savedAt:new Date().toISOString(),conversations:conversations
+      }));
+    }catch(localBackupError){ /* Main restored chat data is already saved. */ }
+
+    currentChatId = conversations.length ? conversations[0].id : null;
+    renderChatList();
+    renderMessages();
+    if(!currentChatId) createChat();
+    $("savedStatus").textContent = includesMemory
+      ? "Chats और Server Memory Restore हो गई।"
+      : "पुरानी Chat History Restore हो गई।";
+    alert(includesMemory ? "AURA AI की Chats और Memory Restore हो गईं।" : "AURA AI की Chat History Restore हो गई।");
+    return true;
+  }catch(error){
+    conversations = previousConversations;
+    try{
+      if(previousStorage === null) localStorage.removeItem(STORAGE_KEY);
+      else localStorage.setItem(STORAGE_KEY,previousStorage);
+    }catch(storageRollbackError){ console.error("Chat rollback failed:",storageRollbackError); }
+    if(memoryChanged && previousMemories){
+      try{ await callMemoryApi("memory_restore",previousMemories); }
+      catch(memoryRollbackError){
+        console.error("Server memory rollback failed:",memoryRollbackError);
+        throw new Error((error.message || error) + " इसके बाद Memory rollback भी सफल नहीं हुआ; अभी Memory की जाँच करें।");
+      }
+    }
+    renderChatList();
+    renderMessages();
+    throw error;
+  }
 }
 
-$("downloadBackupBtn").addEventListener("click", downloadConversationBackup);
-$("restoreBackupBtn").addEventListener("click", function(){
-  if(!activeAuthUid){
-    alert("पहले Google खाते से Login करें।");
-    return;
+async function restoreLocalAutoBackup(){
+  if(!activeAuthUid){ alert("पहले Google खाते से Login करें।"); return; }
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY + "_auto_backup");
+    if(!raw) throw new Error("इस browser में Local Auto Backup उपलब्ध नहीं है।");
+    const localBackup = JSON.parse(raw);
+    if(!localBackup || localBackup.ownerUid !== activeAuthUid || !Array.isArray(localBackup.conversations)){
+      throw new Error("Local Backup इस Google खाते के लिए सही नहीं है।");
+    }
+    await restoreBackupObject({
+      app:"AURA AI", backupVersion:1, backupType:"chat-history",
+      ownerUid:activeAuthUid, conversations:localBackup.conversations
+    });
+  }catch(error){
+    console.error("AURA local restore failed:",error);
+    alert("Local Restore नहीं हुआ: " + (error.message || error));
   }
+}
+
+async function restoreConversationBackup(file){
+  if(!file) return;
+  try{
+    const text = await file.text();
+    const backup = JSON.parse(text);
+    await restoreBackupObject(backup);
+  }catch(error){
+    console.error("AURA backup restore failed:",error);
+    alert("Backup Restore नहीं हुआ: " + (error.message || error));
+  }finally{
+    $("restoreBackupFile").value = "";
+  }
+}
+
+/* Google Drive API: OAuth token is kept only in memory, never localStorage. */
+async function connectDrive(){
+  if(!window.auraRequestDriveAccess) throw new Error("Google Login प्रणाली तैयार नहीं है।");
+  driveAccessToken = await window.auraRequestDriveAccess();
+  driveTokenExpiresAt = Date.now() + 50 * 60 * 1000;
+  localStorage.setItem(STORAGE_KEY + "_drive_auto_enabled","1");
+  startDriveAutoBackup();
+  return driveAccessToken;
+}
+
+async function ensureDriveAccess(){
+  if(driveAccessToken && Date.now() < driveTokenExpiresAt) return driveAccessToken;
+  return await connectDrive();
+}
+
+async function driveFetch(url,options){
+  const token = await ensureDriveAccess();
+  const response = await fetch(url,Object.assign({},options||{}, {
+    headers:Object.assign({},(options&&options.headers)||{}, {Authorization:"Bearer " + token})
+  }));
+  if(response.status === 401){
+    driveAccessToken = null;
+    driveTokenExpiresAt = 0;
+    throw new Error("Google Drive अनुमति समाप्त हो गई। Drive Backup बटन दबाकर फिर से अनुमति दें।");
+  }
+  if(!response.ok){
+    let detail = "";
+    try{ const data = await response.json(); detail = data.error && data.error.message ? data.error.message : ""; }catch(e){}
+    throw new Error("Google Drive API HTTP " + response.status + (detail ? ": " + detail : ""));
+  }
+  return response;
+}
+
+async function uploadBackupToDrive(){
+  if(driveUploadInProgress) return;
+  driveUploadInProgress = true;
+  try{
+    const backup = await createFullBackup();
+    const boundary = "aura_boundary_" + makeId().replace(/[^a-z0-9]/gi,"");
+    const metadata = {name:backupFileName(),mimeType:"application/json"};
+    const body = "--" + boundary + "\r\n" +
+      "Content-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(metadata) + "\r\n" +
+      "--" + boundary + "\r\n" +
+      "Content-Type: application/json; charset=UTF-8\r\n\r\n" + JSON.stringify(backup) + "\r\n" +
+      "--" + boundary + "--";
+    const response = await driveFetch("https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime",{
+      method:"POST",
+      headers:{"Content-Type":"multipart/related; boundary=" + boundary},
+      body:body
+    });
+    const result = await response.json();
+    $("savedStatus").textContent = "Google Drive पर पूरा Backup सेव हुआ: " + (result.name || "AURA AI Backup");
+  }finally{
+    driveUploadInProgress = false;
+  }
+}
+
+function startDriveAutoBackup(){
+  if(driveAutoTimer) clearInterval(driveAutoTimer);
+  driveAutoTimer = setInterval(async function(){
+    if(!driveAccessToken || Date.now() >= driveTokenExpiresAt){
+      clearInterval(driveAutoTimer); driveAutoTimer = null;
+      $("savedStatus").textContent = "Drive Auto Backup रुका है। जारी रखने के लिए Drive Backup दबाएँ।";
+      return;
+    }
+    try{ await uploadBackupToDrive(); }
+    catch(error){
+      console.error("AURA automatic Drive backup failed:",error);
+      $("savedStatus").textContent = "Drive Auto Backup नहीं हुआ: " + (error.message || error);
+    }
+  },DRIVE_AUTO_INTERVAL_MS);
+}
+
+async function handleDriveBackup(){
+  const button = $("driveBackupBtn");
+  button.disabled = true;
+  try{
+    await ensureDriveAccess();
+    await uploadBackupToDrive();
+    $("savedStatus").textContent += " Auto Backup हर 15 मिनट में, जब यह पेज खुला रहेगा।";
+  }catch(error){
+    console.error("AURA Drive backup failed:",error);
+    alert("Google Drive Backup नहीं हुआ: " + (error.message || error) + "\n\nजाँचें कि Google Drive API इस Google Cloud/Firebase project में enabled है और आपने Drive अनुमति दी है।");
+  }finally{ button.disabled = false; }
+}
+
+async function handleDriveRestore(){
+  const button = $("driveRestoreBtn");
+  button.disabled = true;
+  try{
+    const response = await driveFetch("https://www.googleapis.com/drive/v3/files?q=" +
+      encodeURIComponent("name contains 'AURA_AI_Backup_' and trashed=false") +
+      "&orderBy=createdTime%20desc&pageSize=20&fields=files(id,name,createdTime,size)", {method:"GET"});
+    const data = await response.json();
+    const files = Array.isArray(data.files) ? data.files : [];
+    if(!files.length) throw new Error("इस Google खाते में AURA AI के Drive Backups नहीं मिले।");
+    const choices = files.map((file,index)=>(index+1)+". "+file.name+" ("+new Date(file.createdTime).toLocaleString()+")").join("\n");
+    const answer = prompt("कौन-सा Backup Restore करना है? Number लिखें:\n\n" + choices,"1");
+    if(answer === null) return;
+    const selectedIndex = Number(answer) - 1;
+    if(!Number.isInteger(selectedIndex) || selectedIndex < 0 || selectedIndex >= files.length){
+      throw new Error("Backup number सही नहीं है।");
+    }
+    const selected = files[selectedIndex];
+    const fileResponse = await driveFetch("https://www.googleapis.com/drive/v3/files/" + encodeURIComponent(selected.id) + "?alt=media",{method:"GET"});
+    const backup = await fileResponse.json();
+    await restoreBackupObject(backup);
+  }catch(error){
+    console.error("AURA Drive restore failed:",error);
+    alert("Google Drive Restore नहीं हुआ: " + (error.message || error));
+  }finally{ button.disabled = false; }
+}
+
+$("downloadBackupBtn").addEventListener("click",downloadConversationBackup);
+$("restoreBackupBtn").addEventListener("click",function(){
+  if(!activeAuthUid){ alert("पहले Google खाते से Login करें।"); return; }
   $("restoreBackupFile").click();
 });
-$("restoreBackupFile").addEventListener("change", function(event){
+$("restoreBackupFile").addEventListener("change",function(event){
   restoreConversationBackup(event.target.files && event.target.files[0]);
 });
+$("localRestoreBtn").addEventListener("click",restoreLocalAutoBackup);
+$("driveBackupBtn").addEventListener("click",handleDriveBackup);
+$("driveRestoreBtn").addEventListener("click",handleDriveRestore);
 
 window.addEventListener("aura-auth-changed", function(event){
   const uid = event.detail && event.detail.uid ? String(event.detail.uid) : null;
+  const previousUid = activeAuthUid;
   activeAuthUid = uid;
+  if(uid !== previousUid){
+    driveAccessToken = null;
+    driveTokenExpiresAt = 0;
+    if(driveAutoTimer){ clearInterval(driveAutoTimer); driveAutoTimer = null; }
+  }
   STORAGE_KEY = uid ? "aura_ai_conversations_v2_" + uid : "aura_ai_conversations_v2_signed_out";
   conversations = uid ? loadConversations() : [];
   currentChatId = conversations.length ? conversations[0].id : null;
