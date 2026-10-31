@@ -133,6 +133,21 @@ textarea::placeholder{color:#757b89}
 .auth-card{width:min(440px,100%);padding:30px;border:1px solid #51452e;border-radius:20px;background:#12141a;text-align:center;box-shadow:0 24px 80px #0009}
 .auth-logo{font-size:38px;color:var(--gold);margin-bottom:10px}.auth-card h2{margin:0 0 10px}.auth-card p{color:var(--muted);line-height:1.7}.google-login{width:100%;border:1px solid var(--gold2);border-radius:11px;background:#201b13;color:var(--gold);padding:13px;font-weight:700}.auth-error{color:var(--red)!important;font-size:12px;overflow-wrap:anywhere}.account-tools{display:flex;align-items:center;gap:9px;flex-wrap:wrap;justify-content:flex-end}.account-email{font-size:11px;color:var(--muted);max-width:190px;overflow-wrap:anywhere}.logout-btn{border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:7px 10px;font-size:11px}
 
+
+/* AURA Projects & Tasks module */
+.project-page{display:none}.project-page.active{display:block}
+.project-head{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:18px}
+.project-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:16px 0 22px}
+.project-stat,.project-card,.project-form{background:var(--panel);border:1px solid var(--line);border-radius:13px;padding:14px}
+.project-stat small{display:block;color:var(--muted);font-size:11px}.project-stat strong{display:block;font-size:25px;margin-top:5px;color:var(--gold)}
+.project-list{display:grid;gap:12px}.project-card h3{margin:0 0 6px;font-size:16px}.project-muted{color:var(--muted);font-size:12px;line-height:1.6}
+.project-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:12px}.project-btn{border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);padding:8px 10px;font-size:12px}.project-btn.primary{border-color:var(--gold2);color:var(--gold)}
+.project-progress{height:8px;background:#292d37;border-radius:20px;overflow:hidden;margin:9px 0}.project-progress span{display:block;height:100%;background:linear-gradient(90deg,#b9914a,#f0d394);width:0}
+.project-task{display:flex;align-items:flex-start;gap:9px;padding:10px 0;border-top:1px solid var(--line)}.project-task input{margin-top:4px;accent-color:var(--gold)}.project-task-main{min-width:0;flex:1}.project-task.done .project-task-title{text-decoration:line-through;color:var(--muted)}
+.project-empty{padding:25px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:12px}
+.project-form{display:grid;gap:9px;margin-bottom:16px}.project-form[hidden]{display:none}.project-form input,.project-form textarea{width:100%;border:1px solid var(--line);border-radius:8px;background:#0e1015;color:var(--text);padding:10px;min-height:unset}.project-form textarea{min-height:65px}
+@media(max-width:720px){.project-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
 </style>
 </head>
 
@@ -167,6 +182,7 @@ textarea::placeholder{color:#757b89}
       <button class="side-btn" data-tool="ideas">✧ Idea Analyzer</button>
       <button class="side-btn" data-tool="focus">◎ Daily Focus</button>
       <button class="side-btn" data-tool="documents">▤ Document Assistant</button>
+      <button class="side-btn" id="projectsNavBtn" type="button">▦ Projects & Tasks</button>
     </div>
 
     <div class="sidebar-bottom">
@@ -217,6 +233,12 @@ textarea::placeholder{color:#757b89}
         </div>
       </div>
       <div class="messages" id="messages" aria-live="polite"></div>
+      <section class="project-page" id="projectPage" aria-label="Projects and Tasks">
+        <div class="project-head"><div><h2 style="margin:0 0 5px">Projects & Tasks</h2><div class="project-muted">अपने प्रोजेक्ट, काम और कुल प्रगति एक जगह देखें।</div></div><div class="project-actions"><button class="project-btn" id="backToChatBtn" type="button">← Chat पर वापस</button><button class="project-btn primary" id="addProjectBtn" type="button">＋ नया Project</button></div></div>
+        <div class="project-grid" id="projectStats"></div>
+        <form class="project-form" id="projectForm" hidden><strong id="projectFormTitle">नया Project</strong><input id="projectNameInput" maxlength="160" placeholder="Project का नाम" required><textarea id="projectDescriptionInput" maxlength="1000" placeholder="विवरण (वैकल्पिक)"></textarea><div class="project-actions"><button class="project-btn primary" type="submit">Save Project</button><button class="project-btn" id="cancelProjectBtn" type="button">Cancel</button></div></form>
+        <div class="project-list" id="projectList"></div>
+      </section>
     </section>
 
     <div class="composer-wrap">
@@ -399,6 +421,97 @@ function saveConversations(){
    - Drive auto-backup runs every 15 minutes only while this page is open.
    ========================================================= */
 
+let projectData = { version:1, revision:0, projects:[] };
+let projectLocalChangeSeq = 0;
+let editingProjectId = null;
+let projectPageOpen = false;
+let projectSaveQueue = Promise.resolve();
+
+async function callProjectApi(action, data, expectedRevision){
+  if(!activeAuthUid) throw new Error("पहले Google खाते से Login करें।");
+  const body={action:action,idToken:await window.auraGetIdToken()};
+  if(action==="project_save") { body.projectData=data; body.expectedRevision=Number.isSafeInteger(expectedRevision) ? expectedRevision : (Number(data.revision)||0); }
+  const response=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body)});
+  if(!response.ok) throw new Error("Project API HTTP "+response.status);
+  const result=await response.json();
+  if(result && result.conflict===true && result.projectData && Array.isArray(result.projectData.projects)) {
+    const conflictError=new Error(result.error || "Project data दूसरे टैब में बदल चुका है।");
+    conflictError.projectConflict=true;
+    conflictError.latestProjectData=result.projectData;
+    throw conflictError;
+  }
+  if(!result || result.ok!==true || !result.projectData || !Array.isArray(result.projectData.projects)) throw new Error(result && result.error ? result.error : "Project data का Server जवाब सही नहीं है।");
+  return result.projectData;
+}
+function projectId(){return makeId();}
+function projectTotals(){
+  const projects=projectData.projects||[];let total=0,done=0;
+  projects.forEach(p=>(p.tasks||[]).forEach(t=>{total++;if(t.done)done++;}));
+  return {projects:projects.length,total:total,done:done,pending:total-done,percent:total?Math.round(done/total*100):0};
+}
+function renderProjectWorkspace(){
+  const stats=projectTotals();
+  $("projectStats").innerHTML=[
+    ["Total Projects",stats.projects],["Total Tasks",stats.total],["Completed Tasks",stats.done],["Pending Tasks",stats.pending]
+  ].map(x=>'<div class="project-stat"><small>'+x[0]+'</small><strong>'+x[1]+'</strong></div>').join('')+
+  '<div class="project-stat" style="grid-column:1/-1"><small>Overall Progress</small><strong>'+stats.percent+'%</strong><div class="project-progress"><span style="width:'+stats.percent+'%"></span></div><small>'+stats.done+' of '+stats.total+' tasks completed</small></div>';
+  if(!stats.projects){$("projectList").innerHTML='<div class="project-empty">अभी कोई Project नहीं है। शुरू करने के लिए “नया Project” दबाएँ।</div>';return;}
+  $("projectList").innerHTML=projectData.projects.map(p=>{
+    const tasks=p.tasks||[],done=tasks.filter(t=>t.done).length,percent=tasks.length?Math.round(done/tasks.length*100):0;
+    const taskHtml=tasks.length?tasks.map(t=>'<div class="project-task '+(t.done?'done':'')+'"><input type="checkbox" data-task-toggle="'+escapeHtml(p.id)+'|'+escapeHtml(t.id)+'" '+(t.done?'checked':'')+' aria-label="Task complete"><div class="project-task-main"><div class="project-task-title">'+escapeHtml(t.title)+'</div>'+(t.dueDate?'<div class="project-muted">Due: '+escapeHtml(t.dueDate)+'</div>':'')+(t.notes?'<div class="project-muted">'+escapeHtml(t.notes)+'</div>':'')+'</div><button class="project-btn" data-task-edit="'+escapeHtml(p.id)+'|'+escapeHtml(t.id)+'" type="button">Edit</button><button class="project-btn" data-task-delete="'+escapeHtml(p.id)+'|'+escapeHtml(t.id)+'" type="button">Delete</button></div>').join(''):'<div class="project-muted">अभी कोई Task नहीं है।</div>';
+    return '<article class="project-card"><div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start"><div><h3>'+escapeHtml(p.name)+'</h3><div class="project-muted">'+escapeHtml(p.description||'')+'</div></div><strong class="gold">'+percent+'%</strong></div><div class="project-progress"><span style="width:'+percent+'%"></span></div><div class="project-muted">'+done+' / '+tasks.length+' Tasks पूरे</div><div class="project-actions"><button class="project-btn primary" data-task-add="'+escapeHtml(p.id)+'" type="button">＋ Add Task</button><button class="project-btn" data-project-edit="'+escapeHtml(p.id)+'" type="button">Edit Project</button><button class="project-btn" data-project-delete="'+escapeHtml(p.id)+'" type="button">Delete Project</button></div><div style="margin-top:10px">'+taskHtml+'</div></article>';
+  }).join('');
+}
+async function saveProjectWorkspace(){
+  renderProjectWorkspace();
+  const thisChange = ++projectLocalChangeSeq;
+  projectSaveQueue=projectSaveQueue.catch(()=>{}).then(async()=>{
+    // Snapshot only when this queued save starts, so earlier queued saves
+    // cannot overwrite edits made while they were waiting.
+    const snapshot=JSON.parse(JSON.stringify(projectData));
+    const saved=await callProjectApi("project_save",snapshot);
+    if (projectLocalChangeSeq === thisChange) projectData=saved;
+    else projectData.revision=saved.revision;
+    if(projectPageOpen)renderProjectWorkspace();
+  });
+  try{await projectSaveQueue;$ ("savedStatus").textContent="Projects और Tasks Server पर सेव हैं।";}
+  catch(error){
+    console.error("AURA project save failed",error);
+    try{
+      projectData=error.projectConflict && error.latestProjectData
+        ? error.latestProjectData : await callProjectApi("project_get");
+      renderProjectWorkspace();
+    }catch(reloadError){console.error("AURA project reload after save failure failed",reloadError);}
+    alert("Project/Task सेव नहीं हुआ: "+(error.message||error)+"\nसुरक्षा के लिए सर्वर का नवीनतम डेटा दिखाया गया है। अपने बदलाव जाँचकर फिर से लागू करें।");
+    throw error;
+  }
+}
+async function loadProjectWorkspace(){
+  if(!activeAuthUid)return;
+  try{projectData=await callProjectApi("project_get");renderProjectWorkspace();}
+  catch(error){console.error("AURA project load failed",error);alert("Project/Task डेटा लोड नहीं हुआ: "+(error.message||error));}
+}
+function openProjectWorkspace(){
+  if(!activeAuthUid){alert("पहले Google खाते से Login करें।");return;}
+  projectPageOpen=true;$("welcome").style.display="none";$("messages").style.display="none";$("projectPage").classList.add("active");$("projectPage").style.display="block";document.querySelector(".composer-wrap").style.display="none";renderProjectWorkspace();
+}
+function closeProjectWorkspace(){projectPageOpen=false;$("projectPage").classList.remove("active");$("projectPage").style.display="none";$("messages").style.display="flex";document.querySelector(".composer-wrap").style.display="block";$("welcome").style.display=activeChat()&&activeChat().messages.length?"none":"block";}
+$("projectsNavBtn").addEventListener("click",openProjectWorkspace);
+$("backToChatBtn").addEventListener("click",closeProjectWorkspace);
+$("addProjectBtn").addEventListener("click",()=>{editingProjectId=null;$("projectFormTitle").textContent="नया Project";$("projectNameInput").value="";$("projectDescriptionInput").value="";$("projectForm").hidden=false;$("projectNameInput").focus();});
+$("cancelProjectBtn").addEventListener("click",()=>{$("projectForm").hidden=true;});
+$("projectForm").addEventListener("submit",async e=>{e.preventDefault();const name=$("projectNameInput").value.trim();if(!name)return;const now=new Date().toISOString();if(editingProjectId){const p=projectData.projects.find(x=>x.id===editingProjectId);if(p){p.name=name;p.description=$("projectDescriptionInput").value.trim();p.updatedAt=now;}}else{projectData.projects.unshift({id:projectId(),name:name,description:$("projectDescriptionInput").value.trim(),createdAt:now,updatedAt:now,tasks:[]});}$("projectForm").hidden=true;await saveProjectWorkspace();});
+$("projectList").addEventListener("click",async e=>{
+  const b=e.target.closest("button");if(!b)return;const [pid,tid]=(b.dataset.taskEdit||b.dataset.taskDelete||b.dataset.taskAdd||b.dataset.projectEdit||b.dataset.projectDelete||"").split("|");const p=projectData.projects.find(x=>x.id===pid);if(!p)return;
+  if(b.dataset.taskAdd!==undefined){const title=prompt("Task का नाम लिखें:");if(!title||!title.trim())return;const notes=prompt("Task का विवरण (वैकल्पिक):")||"";const dueDate=prompt("Due date (YYYY-MM-DD, वैकल्पिक):")||"";p.tasks.push({id:projectId(),title:title.trim(),done:false,notes:notes.slice(0,1000),dueDate:dueDate.slice(0,20)});}
+  else if(b.dataset.taskEdit!==undefined){const t=p.tasks.find(x=>x.id===tid);if(!t)return;const title=prompt("Task का नाम:",t.title);if(title===null||!title.trim())return;t.title=title.trim();const notes=prompt("Task का विवरण:",t.notes||"");if(notes!==null)t.notes=notes.slice(0,1000);const due=prompt("Due date (YYYY-MM-DD):",t.dueDate||"");if(due!==null)t.dueDate=due.slice(0,20);}
+  else if(b.dataset.taskDelete!==undefined){if(!confirm("यह Task हटाएँ?"))return;p.tasks=p.tasks.filter(t=>t.id!==tid);}
+  else if(b.dataset.projectEdit!==undefined){editingProjectId=p.id;$("projectFormTitle").textContent="Project Edit करें";$("projectNameInput").value=p.name;$("projectDescriptionInput").value=p.description||"";$("projectForm").hidden=false;$("projectNameInput").focus();return;}
+  else if(b.dataset.projectDelete!==undefined){if(!confirm("Project और उसके सभी Tasks हटाएँ?"))return;projectData.projects=projectData.projects.filter(x=>x.id!==pid);}
+  p.updatedAt=new Date().toISOString();await saveProjectWorkspace();
+});
+$("projectList").addEventListener("change",async e=>{const c=e.target;if(!c.matches("[data-task-toggle]"))return;const [pid,tid]=c.dataset.taskToggle.split("|");const p=projectData.projects.find(x=>x.id===pid),t=p&&p.tasks.find(x=>x.id===tid);if(!t)return;t.done=c.checked;p.updatedAt=new Date().toISOString();await saveProjectWorkspace();});
+
 function backupFileName(){
   return "AURA_AI_Backup_" + new Date().toISOString().replace(/[:.]/g,"-") + ".json";
 }
@@ -422,17 +535,8 @@ async function callMemoryApi(action, memories){
 
 async function createFullBackup(){
   if(!activeAuthUid) throw new Error("पहले Google खाते से Login करें।");
-  // Fail the complete export if server memory cannot be fetched.
-  const memories = await callMemoryApi("memory_export");
-  return {
-    app:"AURA AI",
-    backupVersion:2,
-    backupType:"full",
-    ownerUid:activeAuthUid,
-    exportedAt:new Date().toISOString(),
-    conversations:sanitizeConversations(conversations),
-    memories:memories
-  };
+  const results=await Promise.all([callMemoryApi("memory_export"),callProjectApi("project_get")]);
+  return {app:"AURA AI",backupVersion:3,backupType:"full",ownerUid:activeAuthUid,exportedAt:new Date().toISOString(),conversations:sanitizeConversations(conversations),memories:results[0],projectData:results[1]};
 }
 
 function downloadJsonBackup(backup){
@@ -453,7 +557,7 @@ async function downloadConversationBackup(){
   try{
     const backup = await createFullBackup();
     downloadJsonBackup(backup);
-    $("savedStatus").textContent = "Chats और Server Memory का पूरा Backup डाउनलोड हुआ।";
+    $("savedStatus").textContent = "Chats, Memory, Projects और Tasks का पूरा Backup डाउनलोड हुआ।";
   }catch(error){
     console.error("AURA backup export failed:",error);
     alert("पूरा Backup नहीं बन सका: " + (error.message || error) + "\n\nServer Memory export सफल हुए बिना अधूरा Backup डाउनलोड नहीं किया गया।");
@@ -469,13 +573,30 @@ function validateBackupObject(backup){
   }
   if(backup.backupVersion === 1 && backup.backupType === "chat-history"){
     // Backward compatibility with the earlier chat-only backup format.
-  }else if(backup.backupVersion === 2 && backup.backupType === "full" && Array.isArray(backup.memories)){
+  }else if((backup.backupVersion === 2 || backup.backupVersion === 3) && backup.backupType === "full" && Array.isArray(backup.memories)){
     if(backup.memories.length > 20) throw new Error("Backup में Memory entries की संख्या सीमा से अधिक है।");
     backup.memories.forEach(item=>{
       if(!item || typeof item.text !== "string" || !item.text.trim() || item.text.trim().length > 250){
         throw new Error("Backup में Memory entry सही नहीं है।");
       }
     });
+    if(backup.backupVersion === 3){
+      const pd=backup.projectData;
+      if(!pd || typeof pd!=="object" || !Array.isArray(pd.projects) || pd.projects.length>100) throw new Error("Backup में Project data सही नहीं है।");
+      const idPattern=/^[A-Za-z0-9_-]{1,100}$/;
+      const projectIds=new Set();
+      pd.projects.forEach(p=>{
+        if(!p || typeof p.id!=="string" || !idPattern.test(p.id) || projectIds.has(p.id) || typeof p.name!=="string" || !p.name.trim() || p.name.length>160 || typeof p.description!=="string" || p.description.length>1000 || !Array.isArray(p.tasks) || p.tasks.length>500) throw new Error("Backup में Project की जानकारी सही नहीं है।");
+        projectIds.add(p.id);
+        const taskIds=new Set();
+        p.tasks.forEach(task=>{
+          if(!task || typeof task.id!=="string" || !idPattern.test(task.id) || taskIds.has(task.id) || typeof task.title!=="string" || !task.title.trim() || task.title.length>200 || typeof task.done!=="boolean" || typeof task.notes!=="string" || task.notes.length>1000 || typeof task.dueDate!=="string" || task.dueDate.length>20) throw new Error("Backup में Task की जानकारी सही नहीं है।");
+          taskIds.add(task.id);
+        });
+      });
+      const projectBytes=new TextEncoder().encode(JSON.stringify({version:1,projects:pd.projects})).length;
+      if(projectBytes>8000) throw new Error("Backup का Project/Task डेटा 8,000 bytes से बड़ा है।");
+    }
   }else{
     throw new Error("Backup version समर्थित नहीं है।");
   }
@@ -493,11 +614,12 @@ function validateBackupObject(backup){
 async function restoreBackupObject(backup){
   validateBackupObject(backup);
   const chatCount = backup.conversations.length;
-  const includesMemory = backup.backupVersion === 2 && backup.backupType === "full";
+  const includesMemory = (backup.backupVersion === 2 || backup.backupVersion === 3) && backup.backupType === "full";
+  const includesProjects = backup.backupVersion === 3 && backup.backupType === "full";
   const confirmText = "इस Backup में " + chatCount + " बातचीत" +
     (includesMemory ? " और " + backup.memories.length + " Memory entries" : "") +
-    " हैं। Restore करने पर इस Google खाते की मौजूदा chats" +
-    (includesMemory ? " और Server Memory" : "") + " बदल जाएँगी। पहले मौजूदा Backup ले लें। जारी रखें?";
+    (includesProjects ? " तथा " + backup.projectData.projects.length + " Projects" : "") +
+    " हैं। Restore करने पर संबंधित मौजूदा डेटा बदल जाएगा। पहले मौजूदा Backup ले लें। जारी रखें?";
   if(!confirm(confirmText)) return false;
 
   const previousConversations = conversations;
@@ -505,6 +627,8 @@ async function restoreBackupObject(backup){
   const restoredConversations = sanitizeConversations(backup.conversations);
   let previousMemories = null;
   let memoryChanged = false;
+  let previousProjectData = null;
+  let projectsChanged = false;
 
   try{
     if(includesMemory){
@@ -512,6 +636,13 @@ async function restoreBackupObject(backup){
       previousMemories = await callMemoryApi("memory_export");
       await callMemoryApi("memory_restore",backup.memories);
       memoryChanged = true;
+    }
+    if(includesProjects){
+      previousProjectData = await callProjectApi("project_get");
+      const restoredProjectData = await callProjectApi("project_save",backup.projectData,previousProjectData.revision);
+      projectsChanged = true;
+      projectData = restoredProjectData;
+      if(projectPageOpen) renderProjectWorkspace();
     }
 
     // Persist first. If this fails, the server Memory is rolled back below.
@@ -528,10 +659,10 @@ async function restoreBackupObject(backup){
     renderChatList();
     renderMessages();
     if(!currentChatId) createChat();
-    $("savedStatus").textContent = includesMemory
-      ? "Chats और Server Memory Restore हो गई।"
-      : "पुरानी Chat History Restore हो गई।";
-    alert(includesMemory ? "AURA AI की Chats और Memory Restore हो गईं।" : "AURA AI की Chat History Restore हो गई।");
+    $("savedStatus").textContent = includesProjects
+      ? "Chats, Memory, Projects और Tasks Restore हो गए।"
+      : (includesMemory ? "Chats और Server Memory Restore हो गई।" : "पुरानी Chat History Restore हो गई।");
+    alert(includesProjects ? "AURA AI की Chats, Memory, Projects और Tasks Restore हो गए।" : (includesMemory ? "AURA AI की Chats और Memory Restore हो गईं।" : "AURA AI की Chat History Restore हो गई।"));
     return true;
   }catch(error){
     conversations = previousConversations;
@@ -539,6 +670,10 @@ async function restoreBackupObject(backup){
       if(previousStorage === null) localStorage.removeItem(STORAGE_KEY);
       else localStorage.setItem(STORAGE_KEY,previousStorage);
     }catch(storageRollbackError){ console.error("Chat rollback failed:",storageRollbackError); }
+    if(projectsChanged && previousProjectData){
+      try{ await callProjectApi("project_save",previousProjectData,projectData.revision); projectData=previousProjectData; }
+      catch(projectRollbackError){ console.error("Project data rollback failed:",projectRollbackError); }
+    }
     if(memoryChanged && previousMemories){
       try{ await callMemoryApi("memory_restore",previousMemories); }
       catch(memoryRollbackError){
@@ -715,6 +850,8 @@ window.addEventListener("aura-auth-changed", function(event){
   const previousUid = activeAuthUid;
   activeAuthUid = uid;
   if(uid !== previousUid){
+    projectData = { version:1, revision:0, projects:[] };
+    closeProjectWorkspace();
     driveAccessToken = null;
     driveTokenExpiresAt = 0;
     if(driveAutoTimer){ clearInterval(driveAutoTimer); driveAutoTimer = null; }
@@ -725,6 +862,7 @@ window.addEventListener("aura-auth-changed", function(event){
   if (currentChatId) { renderChatList(); renderMessages(); }
   else if (uid) createChat();
   else { renderChatList(); renderMessages(); }
+  if(uid) loadProjectWorkspace();
 });
 
 function activeChat(){
@@ -732,6 +870,7 @@ function activeChat(){
 }
 
 function createChat(){
+  if(projectPageOpen) closeProjectWorkspace();
   const chat={id:makeId(),title:"नई बातचीत",messages:[],updatedAt:Date.now()};
   conversations.unshift(chat);
   currentChatId=chat.id;
@@ -960,6 +1099,7 @@ const toolPrompts={
 };
 
 function runTool(name){
+  if(projectPageOpen) closeProjectWorkspace();
   if(name==="documents"&&!selectedFileText){
     $("userInput").value="मेरे दस्तावेज़ का सारांश, मुख्य बिंदु और आवश्यक कार्रवाई बताओ। पहले मुझे फ़ाइल जोड़ने का निर्देश दो।";
     $("userInput").focus();
