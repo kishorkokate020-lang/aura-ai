@@ -179,6 +179,7 @@ textarea::placeholder{color:#757b89}
     <div class="section-label">WORKSPACE TOOLS</div>
     <div class="side-tools">
       <button class="side-btn" data-tool="planner">◈ Smart Planner</button>
+      <button class="side-btn" id="smartBrainBtn" type="button">✦ AURA Smart Brain</button>
       <button class="side-btn" data-tool="ideas">✧ Idea Analyzer</button>
       <button class="side-btn" data-tool="focus">◎ Daily Focus</button>
       <button class="side-btn" data-tool="documents">▤ Document Assistant</button>
@@ -1060,6 +1061,90 @@ const toolPrompts={
   documents:"DOCUMENT ASSISTANT: मैं दस्तावेज़ की सामग्री दूँगा। उसका सारांश, मुख्य बिंदु और ज़रूरी कार्रवाई सरल हिंदी में बताओ।"
 };
 
+// AURA SMART BRAIN — Phase 1
+async function runAuraSmartBrain(){
+  if(isSending)return;
+
+  const task=$("userInput").value.trim();
+  if(!task){
+    showTemporaryMessage("पहले अपना काम लिखें, फिर Smart Brain दबाएँ।");
+    $("userInput").focus();
+    return;
+  }
+
+  if(!activeAuthUid){
+    showTemporaryMessage("पहले Google Login करें।");
+    return;
+  }
+
+  const button=$("smartBrainBtn");
+  button.disabled=true;
+  button.textContent="योजना बन रही है…";
+  setStatus("Smart Brain योजना बना रहा है","var(--gold)");
+
+  try{
+    const response=await fetch(API_URL,{
+      method:"POST",
+      headers:{"Content-Type":"text/plain;charset=utf-8"},
+      body:JSON.stringify({
+        action:"smart_brain_plan",
+        message:task,
+        history:getHistoryForApi(activeChat()),
+        idToken:await window.auraGetIdToken()
+      })
+    });
+
+    const data=await response.json();
+    if(!response.ok||!data.ok||!data.plan){
+      throw new Error(data.error||"योजना नहीं बन सकी।");
+    }
+
+    const plan=data.plan;
+    let output="✦ AURA SMART BRAIN — "+plan.title+"\n\n";
+    output+="लक्ष्य: "+(plan.goal||task)+"\n\n";
+    output+=(plan.summary||"")+"\n\n";
+
+    plan.steps.forEach(step=>{
+      output+=step.number+". "+step.title+
+        " ["+step.priority+"]\n";
+      output+=step.description+"\n";
+      if(step.requiresApproval){
+        output+="⚠️ आपकी अनुमति आवश्यक: "+
+          (step.approvalReason||"अनुमति लें")+"\n";
+      }
+      output+="\n";
+    });
+
+    if(plan.recommendedFeatures.length){
+      output+="उपयोगी AURA फीचर्स:\n"+
+        plan.recommendedFeatures.join(", ")+"\n\n";
+    }
+    if(plan.risks.length){
+      output+="ध्यान देने योग्य बातें:\n"+
+        plan.risks.join("\n")+"\n\n";
+    }
+    if(plan.questions.length){
+      output+="कुछ सवाल:\n"+
+        plan.questions.join("\n")+"\n\n";
+    }
+
+    output+=plan.executionNote||"यह केवल योजना है।";
+    addMessage("assistant",output);
+    lastAssistantText=output;
+    setStatus("योजना तैयार","var(--green)");
+    $("userInput").value="";
+  }catch(error){
+    console.error("Smart Brain error:",error);
+    showTemporaryMessage("Smart Brain समस्या: "+error.message);
+    setStatus("Smart Brain समस्या","var(--red)");
+  }finally{
+    button.disabled=false;
+    button.textContent="✦ AURA Smart Brain";
+  }
+}
+
+$("smartBrainBtn").addEventListener("click",runAuraSmartBrain);
+  
 function runTool(name){
   if(projectPageOpen) closeProjectWorkspace();
   if(name==="documents"&&!selectedFileText){
